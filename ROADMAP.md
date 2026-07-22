@@ -95,7 +95,8 @@
   DFL デコード + アンカー/stride + sigmoid + クラス別 NMS。Ultralytics の eval 出力と
   NMS 結果に一致 (box ~8e-5, 同一クラス・件数)。デコードは xyxy 出力
   (本バージョンの Ultralytics ヘッドに合わせた)。
-- **E-3. 評価**: mAP 計算。
+- ✅ **E-3. 評価**: 実装済み (`pure/metrics.hpp`, `pure/m15_map.cpp`)。COCO 方式 mAP
+  (area=all, maxDets=100, IoU 0.50:0.05:0.95, 101点補間) を **pycocotools と一致 (~3e-7)** で検証。
 - **E-4. 複数バッチ / 学習の実運用化** (チェックポイント保存 = A-1 と連動)。
 
 ---

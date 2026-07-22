@@ -79,7 +79,8 @@ A minimal reverse-mode autograd engine over dense tensors, then all of yolov8n o
 | `pure/net_dyn.hpp` + `pure/m12_dyn.cpp` | **data-driven net** (arch manifest, any size) | n / s / m match ~1e-4 |
 | `pure/onnx.hpp` + `pure/onnx_export.cpp` | **ONNX writer** (hand-rolled protobuf, no deps) | onnxruntime runs it, ~2e-5 |
 | `pure/onnx_run.hpp` + `pure/m13_onnx_run.cpp` | **ONNX reader + graph interpreter** | pure engine runs the `.onnx`, ~2e-5 |
-| `pure/dataset.hpp` + `pure/m14_train_real.cpp` | **real-data training** (stb image + labels → TAL → loss → Adam/cosine) | loss 7.9 → 1.1 |
+| `pure/dataset.hpp` + `pure/m14_train_real.cpp` | **real-data training** (batched: stb images + labels → TAL → loss → Adam/cosine) | loss 8.4 → 1.2 |
+| `pure/metrics.hpp` + `pure/m15_map.cpp` | **COCO mAP** (AP@0.50, AP@0.50:0.95) | match pycocotools ~3e-7 |
 
 For inference BatchNorm is folded into the preceding conv; for training/round-trip the
 unfused path (`pure/bn.hpp` + `pure/net_unfused.hpp`) keeps conv/BN separate so weights
@@ -134,8 +135,8 @@ only. Both g++ (OpenMP) and MSVC (std::thread) build and parallelise from one so
 A **data-driven builder** runs any size (n/s/m/l/x) from an arch manifest, and a
 self-contained **ONNX reader/writer** exports the net to a standard `.onnx`
 (onnxruntime-verified) and runs a `.onnx` graph-driven in the pure engine — no external
-libraries. Remaining: mAP evaluation and an optional CUDA backend behind the conv seam
-(see [ROADMAP.md](ROADMAP.md)).
+libraries. **COCO mAP** matches pycocotools (~3e-7), and conv uses im2col+GEMM.
+Remaining: an optional CUDA backend behind the conv seam (see [ROADMAP.md](ROADMAP.md)).
 
 ## Licenses & attribution
 Bundled third-party components keep their own licenses — see
