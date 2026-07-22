@@ -53,7 +53,9 @@
 - ✅ **C-1. BatchNorm を学習可能 op に** — 実装済み (`pure/bn.hpp`, `pure/m7_bn.cpp`)。
   forward/backward + running stats 更新、train/eval 両モードで torch と一致 (~1e-7)。
   unfused な conv+BN+SiLU 版フォワード (`pure/net_unfused.hpp`) も本家と一致 (~2e-5)。
-- **C-2. optimizer**: 現状 SGD 直書き。Adam / momentum / weight decay / LR スケジュール。
+- ✅ **C-2. optimizer** — 実装済み (`pure/optim.hpp`, `pure/m10_optim.cpp`)。SGD
+  (momentum / weight decay / Nesterov) と Adam / AdamW を torch.optim と一致 (~1e-7) で検証。
+  残り: LR スケジュール (cosine/warmup) と学習ループへの本格組み込み。
 - **C-3. matmul op**: v11 の C2PSA (attention) に必要 (下記 D-1)。
 - **C-4. CUDA バックエンド**: conv 等を `#ifdef USE_CUDA` 境界の裏に隠して差し込む
   (CPU/OpenMP はフラグ切替で維持)。

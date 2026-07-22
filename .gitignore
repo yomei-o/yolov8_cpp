@@ -21,3 +21,6 @@ pure/ref/assets/
 # demo output images (repo root)
 /out*.png
 /*.png
+
+# python
+__pycache__/

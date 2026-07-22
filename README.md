@@ -46,6 +46,7 @@ A minimal reverse-mode autograd engine over dense tensors, then all of yolov8n o
 | `pure/bn.hpp` + `pure/m7_bn.cpp` | **BatchNorm2d as a trainable op** (fwd/bwd + running stats) | match torch ~1e-7 |
 | `pure/net_unfused.hpp` + `pure/m8_forward_unfused.cpp` | full forward with conv+BN+SiLU **unfused** | matches net ~2e-5 |
 | `pure/m9_train_writeback.cpp` | **train (live BN) → write weights back to `.pt`** | serialization exact; Ultralytics runs it |
+| `pure/optim.hpp` + `pure/m10_optim.cpp` | **optimizers** (SGD/mom/WD/Nesterov, Adam, AdamW) | match torch.optim ~1e-7 |
 
 For inference BatchNorm is folded into the preceding conv; for training/round-trip the
 unfused path (`pure/bn.hpp` + `pure/net_unfused.hpp`) keeps conv/BN separate so weights
