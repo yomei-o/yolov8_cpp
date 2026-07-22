@@ -144,87 +144,93 @@ inline Tensor mean(const Tensor& a) {
 // ============================================================================
 
 // conv2d: in (N,Cin,H,W), w (Cout,Cin,kh,kw), bias (Cout) or nullptr. groups=1.
+// im2col + GEMM: the input patches are gathered into a (K, P) matrix (K=Cin*kh*kw,
+// P=OH*OW) and the conv becomes W(Cout,K) @ col(K,P). The inner loops run over the
+// contiguous P dimension so the compiler auto-vectorises them, and parallel_for spreads
+// the outer dimension across cores — far faster than the naive index-per-output loop.
+inline void im2col_(const float* I, int64_t Cin, int64_t H, int64_t W, int64_t kh, int64_t kw,
+                    int64_t OH, int64_t OW, int64_t stride, int64_t pad, float* col) {
+  int64_t P = OH * OW;
+  for (int64_t ci = 0; ci < Cin; ++ci)
+    for (int64_t r = 0; r < kh; ++r)
+      for (int64_t s = 0; s < kw; ++s) {
+        float* crow = col + (((ci * kh + r) * kw + s) * P);
+        for (int64_t oh = 0; oh < OH; ++oh) {
+          int64_t ih = oh * stride - pad + r;
+          if (ih < 0 || ih >= H) { for (int64_t ow = 0; ow < OW; ++ow) crow[oh * OW + ow] = 0.f; continue; }
+          const float* irow = I + (ci * H + ih) * W;
+          for (int64_t ow = 0; ow < OW; ++ow) {
+            int64_t iw = ow * stride - pad + s;
+            crow[oh * OW + ow] = (iw < 0 || iw >= W) ? 0.f : irow[iw];
+          }
+        }
+      }
+}
+
 inline Tensor conv2d(const Tensor& in, const Tensor& w, const Tensor& bias,
                      int64_t stride, int64_t pad) {
   int64_t N = in->shape[0], Cin = in->shape[1], H = in->shape[2], W = in->shape[3];
   int64_t Cout = w->shape[0], kh = w->shape[2], kw = w->shape[3];
   int64_t OH = (H + 2 * pad - kh) / stride + 1;
   int64_t OW = (W + 2 * pad - kw) / stride + 1;
+  int64_t K = Cin * kh * kw, P = OH * OW;
   auto o = make_tensor({N, Cout, OH, OW}, true);
-  const float* I = in->data.data(); const float* K = w->data.data();
+  const float* Wd = w->data.data();
   const float* B = bias ? bias->data.data() : nullptr;
   float* O = o->data.data();
 
-  parallel_for(N * Cout, [&](int64_t nc) {
-    int64_t n = nc / Cout, co = nc % Cout;
-    for (int64_t oh = 0; oh < OH; ++oh)
-      for (int64_t ow = 0; ow < OW; ++ow) {
-        float acc = B ? B[co] : 0.f;
-        for (int64_t ci = 0; ci < Cin; ++ci)
-          for (int64_t r = 0; r < kh; ++r) {
-            int64_t ih = oh * stride - pad + r; if (ih < 0 || ih >= H) continue;
-            for (int64_t s = 0; s < kw; ++s) {
-              int64_t iw = ow * stride - pad + s; if (iw < 0 || iw >= W) continue;
-              acc += I[((n * Cin + ci) * H + ih) * W + iw] *
-                     K[((co * Cin + ci) * kh + r) * kw + s];
-            }
-          }
-        O[((n * Cout + co) * OH + oh) * OW + ow] = acc;
+  for (int64_t n = 0; n < N; ++n) {
+    std::vector<float> col(K * P);
+    im2col_(in->data.data() + n * Cin * H * W, Cin, H, W, kh, kw, OH, OW, stride, pad, col.data());
+    const float* colp = col.data();
+    float* On = O + n * Cout * P;
+    parallel_for(Cout, [&](int64_t co) {
+      float* orow = On + co * P;
+      float b = B ? B[co] : 0.f;
+      for (int64_t p = 0; p < P; ++p) orow[p] = b;
+      const float* wrow = Wd + co * K;
+      for (int64_t k = 0; k < K; ++k) {
+        float wv = wrow[k]; const float* crow = colp + k * P;
+        for (int64_t p = 0; p < P; ++p) orow[p] += wv * crow[p];   // contiguous -> vectorised
       }
-  });
+    });
+  }
 
   o->parents = bias ? std::vector<Tensor>{in, w, bias} : std::vector<Tensor>{in, w};
   Node* op = o.get();
-  o->backward_fn = [in, w, bias, op, N, Cin, H, W, Cout, kh, kw, OH, OW, stride, pad] {
-    const float* I = in->data.data(); const float* K = w->data.data();
-    const float* GO = op->grad.data();
-    float* GI = in->grad.data(); float* GK = w->grad.data();
-    // grad wrt input: parallelize over (n,ci) -> disjoint writes
-    parallel_for(N * Cin, [&](int64_t nci) {
-      int64_t n = nci / Cin, ci = nci % Cin;
-      for (int64_t co = 0; co < Cout; ++co)
-        for (int64_t oh = 0; oh < OH; ++oh)
-          for (int64_t ow = 0; ow < OW; ++ow) {
-            float g = GO[((n * Cout + co) * OH + oh) * OW + ow];
-            if (g == 0.f) continue;
-            for (int64_t r = 0; r < kh; ++r) {
-              int64_t ih = oh * stride - pad + r; if (ih < 0 || ih >= H) continue;
-              for (int64_t s = 0; s < kw; ++s) {
-                int64_t iw = ow * stride - pad + s; if (iw < 0 || iw >= W) continue;
-                GI[((n * Cin + ci) * H + ih) * W + iw] +=
-                    g * K[((co * Cin + ci) * kh + r) * kw + s];
-              }
-            }
-          }
-    });
-    // grad wrt weight: parallelize over co -> disjoint writes
-    parallel_for(Cout, [&](int64_t co) {
-      for (int64_t ci = 0; ci < Cin; ++ci)
+  o->backward_fn = [in, w, bias, op, N, Cin, H, W, Cout, kh, kw, OH, OW, stride, pad, K, P] {
+    const float* Wd = w->data.data();
+    float* GK = w->grad.data(); float* GI = in->grad.data();
+    if (bias) { float* GB = bias->grad.data();
+      parallel_for(Cout, [&](int64_t co) { double a = 0; for (int64_t n = 0; n < N; ++n) { const float* g = op->grad.data() + (n * Cout + co) * P; for (int64_t p = 0; p < P; ++p) a += g[p]; } GB[co] += (float)a; });
+    }
+    for (int64_t n = 0; n < N; ++n) {
+      std::vector<float> col(K * P);
+      im2col_(in->data.data() + n * Cin * H * W, Cin, H, W, kh, kw, OH, OW, stride, pad, col.data());
+      const float* colp = col.data();
+      const float* GOn = op->grad.data() + n * Cout * P;
+      // dW += dO(Cout,P) . col(K,P)^T  (row dot products, contiguous over P)
+      parallel_for(Cout, [&](int64_t co) {
+        const float* g = GOn + co * P; float* gk = GK + co * K;
+        for (int64_t k = 0; k < K; ++k) { const float* crow = colp + k * P; float a = 0; for (int64_t p = 0; p < P; ++p) a += g[p] * crow[p]; gk[k] += a; }
+      });
+      // dcol = W^T(K,Cout) @ dO(Cout,P), then col2im -> dIn
+      std::vector<float> dcol(K * P, 0.f);
+      parallel_for(K, [&](int64_t k) {
+        float* dcrow = dcol.data() + k * P;
+        for (int64_t co = 0; co < Cout; ++co) { float wv = Wd[co * K + k]; const float* g = GOn + co * P; for (int64_t p = 0; p < P; ++p) dcrow[p] += wv * g[p]; }
+      });
+      float* GIn = GI + n * Cin * H * W;
+      parallel_for(Cin, [&](int64_t ci) {
         for (int64_t r = 0; r < kh; ++r)
           for (int64_t s = 0; s < kw; ++s) {
-            float acc = 0.f;
-            for (int64_t n = 0; n < N; ++n)
-              for (int64_t oh = 0; oh < OH; ++oh) {
-                int64_t ih = oh * stride - pad + r; if (ih < 0 || ih >= H) continue;
-                for (int64_t ow = 0; ow < OW; ++ow) {
-                  int64_t iw = ow * stride - pad + s; if (iw < 0 || iw >= W) continue;
-                  acc += I[((n * Cin + ci) * H + ih) * W + iw] *
-                         GO[((n * Cout + co) * OH + oh) * OW + ow];
-                }
-              }
-            GK[((co * Cin + ci) * kh + r) * kw + s] += acc;
+            const float* dcrow = dcol.data() + (((ci * kh + r) * kw + s) * P);
+            for (int64_t oh = 0; oh < OH; ++oh) {
+              int64_t ih = oh * stride - pad + r; if (ih < 0 || ih >= H) continue;
+              float* girow = GIn + (ci * H + ih) * W;
+              for (int64_t ow = 0; ow < OW; ++ow) { int64_t iw = ow * stride - pad + s; if (iw < 0 || iw >= W) continue; girow[iw] += dcrow[oh * OW + ow]; }
+            }
           }
-    });
-    // grad wrt bias
-    if (bias) {
-      float* GB = bias->grad.data();
-      parallel_for(Cout, [&](int64_t co) {
-        float acc = 0.f;
-        for (int64_t n = 0; n < N; ++n)
-          for (int64_t oh = 0; oh < OH; ++oh)
-            for (int64_t ow = 0; ow < OW; ++ow)
-              acc += GO[((n * Cout + co) * OH + oh) * OW + ow];
-        GB[co] += acc;
       });
     }
   };

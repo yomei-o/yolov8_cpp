@@ -71,7 +71,7 @@ int main(int argc, char** argv) {
       }
     }
 
-  printf("forward (%lldx%lld, naive conv)...\n", (long long)S, (long long)S);
+  printf("forward (%lldx%lld, im2col+GEMM)...\n", (long long)S, (long long)S);
   auto prov = load_net_blob(wdir);
   prov.i = 0;
   auto lv = yolov8n_forward(x, prov);

@@ -24,7 +24,7 @@ int main() {
   auto prov = load_net(DN);
   auto x = from_data({1, 3, S, S}, rd(DI + "x.bin"));
 
-  printf("forward (%lldx%lld, naive conv)...\n", (long long)S, (long long)S);
+  printf("forward (%lldx%lld, im2col+GEMM)...\n", (long long)S, (long long)S);
   prov.i = 0;
   auto lv = yolov8n_forward(x, prov);
   int64_t A = 0; for (auto& p : lv) A += p.first->shape[2] * p.first->shape[3];

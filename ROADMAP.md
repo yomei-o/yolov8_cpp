@@ -64,7 +64,10 @@
   forward/backward を torch と一致 (~1e-7) で検証。v11 の C2PSA (attention, 下記 D-1) の土台。
 - **C-4. CUDA バックエンド**: conv 等を `#ifdef USE_CUDA` 境界の裏に隠して差し込む
   (CPU/OpenMP はフラグ切替で維持)。
-- **C-5. 速度**: 現状 naive conv。im2col + GEMM、キャッシュブロッキング、fp16。
+- **C-5. 速度**: ✅ **im2col + GEMM 化 実装済み** (`pure/autograd.hpp` conv2d)。順・逆とも
+  パッチを (K,P) 行列に集約し、連続メモリの内ループを自動ベクトル化＋ `parallel_for` で
+  並列化。順伝播 640 が 11.9s → 2.2s (約5.4x)、学習 iter(160) が 0.99s → 0.32s (約3x)。
+  残り: キャッシュブロッキング、バッファ再利用 (malloc 削減)、fp16、複数画像バッチ。
 
 ---
 
