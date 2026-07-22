@@ -41,6 +41,6 @@ copyright; the notices below apply to those files only.
 ---
 
 The project's own source code (the `pure/` engine, `ref/` scripts, `step*.cpp`, and the
-docs) was written for this repository. It does not yet declare a top-level license — add
-a `LICENSE` file to state the terms you want for that code. Note that distributing it
-together with the AGPL-3.0 artifacts above carries the AGPL obligations for those files.
+docs) is licensed under the **BSD 3-Clause License** — see [`LICENSE`](LICENSE). Note
+that distributing it together with the AGPL-3.0 artifacts above still carries the AGPL
+obligations for those specific files.

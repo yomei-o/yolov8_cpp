@@ -144,4 +144,5 @@ Bundled third-party components keep their own licenses — see
   YOLOv8**, **AGPL-3.0** — redistributing this repo carries the AGPL obligations for them.
 - `pure/third_party/stb_*.h` are **stb** (public-domain / MIT).
 
-The repository's own code has no top-level license yet; add a `LICENSE` to declare it.
+The repository's own code (the `pure/` engine, `ref/` scripts, `step*.cpp`, docs) is
+**BSD 3-Clause** — see [LICENSE](LICENSE).
