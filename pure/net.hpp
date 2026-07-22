@@ -31,6 +31,29 @@ inline Provider load_net(const std::string& D) {
   return p;
 }
 
+// pack per-level (B,C,h,w) feature maps into (B*Atot, C), anchor-major per batch.
+inline Tensor pack_levels(const std::vector<Tensor>& lv, int64_t B, int64_t Atot, int64_t C) {
+  auto o = make_tensor({B * Atot, C}, true);
+  int64_t off = 0;
+  for (auto& t : lv) {
+    int64_t hw = t->shape[2] * t->shape[3];
+    for (int64_t b = 0; b < B; ++b) for (int64_t c = 0; c < C; ++c) for (int64_t a = 0; a < hw; ++a)
+      o->data[(b * Atot + off + a) * C + c] = t->data[((b * C + c) * hw) + a];
+    off += hw;
+  }
+  o->parents = lv; Node* op = o.get();
+  o->backward_fn = [lv, op, B, Atot, C] {
+    int64_t off = 0;
+    for (auto& t : lv) {
+      int64_t hw = t->shape[2] * t->shape[3];
+      for (int64_t b = 0; b < B; ++b) for (int64_t c = 0; c < C; ++c) for (int64_t a = 0; a < hw; ++a)
+        t->grad[((b * C + c) * hw) + a] += op->grad[(b * Atot + off + a) * C + c];
+      off += hw;
+    }
+  };
+  return o;
+}
+
 inline Tensor conv_apply(const Tensor& x, ConvW& c) {
   auto y = conv2d(x, c.w, c.b, c.stride, c.w->shape[2] / 2);
   return c.act ? silu(y) : y;
