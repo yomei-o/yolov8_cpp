@@ -56,7 +56,8 @@
 - ✅ **C-2. optimizer** — 実装済み (`pure/optim.hpp`, `pure/m10_optim.cpp`)。SGD
   (momentum / weight decay / Nesterov) と Adam / AdamW を torch.optim と一致 (~1e-7) で検証。
   残り: LR スケジュール (cosine/warmup) と学習ループへの本格組み込み。
-- **C-3. matmul op**: v11 の C2PSA (attention) に必要 (下記 D-1)。
+- ✅ **C-3. matmul op** — 実装済み (`pure/linalg.hpp`: matmul + transpose2d, `pure/m11_matmul.cpp`)。
+  forward/backward を torch と一致 (~1e-7) で検証。v11 の C2PSA (attention, 下記 D-1) の土台。
 - **C-4. CUDA バックエンド**: conv 等を `#ifdef USE_CUDA` 境界の裏に隠して差し込む
   (CPU/OpenMP はフラグ切替で維持)。
 - **C-5. 速度**: 現状 naive conv。im2col + GEMM、キャッシュブロッキング、fp16。
