@@ -1,0 +1,17 @@
+# build / binaries
+build/
+*.exe
+*.obj
+*.lib
+*.exp
+*.pdb
+*.o
+
+# generated data & model artifacts
+data/
+out/
+pure/ref/data/
+pure/ref/data_*/
+*.bin
+*.torchscript
+*.pt
