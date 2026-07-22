@@ -71,7 +71,13 @@
 
 - **E-1. 実データローダ**: 画像読み込み (letterbox リサイズ) + ラベル読み込み +
   gt 正規化 (画像座標 ↔ stride 単位)。現状は合成バッチ。
-- **E-2. 推論経路**: DFL デコード + NMS を実装し、実際の検出結果を出す。
+  - ✅ **画像側は実装済み** (`pure/m6_demo.cpp`): stb_image で JPEG/PNG を読み、
+    letterbox + bilinear リサイズして推論、結果を元画像に描画して stb_image_write で出力。
+    残り: ラベル読み込みと gt 正規化 (学習用データローダ)。
+- **E-2. 推論経路**: ✅ **実装済み** (`pure/infer.hpp` + `pure/m6_infer.cpp`):
+  DFL デコード + アンカー/stride + sigmoid + クラス別 NMS。Ultralytics の eval 出力と
+  NMS 結果に一致 (box ~8e-5, 同一クラス・件数)。デコードは xyxy 出力
+  (本バージョンの Ultralytics ヘッドに合わせた)。
 - **E-3. 評価**: mAP 計算。
 - **E-4. 複数バッチ / 学習の実運用化** (チェックポイント保存 = A-1 と連動)。
 

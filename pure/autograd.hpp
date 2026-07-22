@@ -10,6 +10,7 @@
 #include <numeric>
 #include <algorithm>
 #include <unordered_set>
+#include "parallel.hpp"
 
 struct Node;
 using Tensor = std::shared_ptr<Node>;
@@ -154,23 +155,23 @@ inline Tensor conv2d(const Tensor& in, const Tensor& w, const Tensor& bias,
   const float* B = bias ? bias->data.data() : nullptr;
   float* O = o->data.data();
 
-  #pragma omp parallel for collapse(2)
-  for (int64_t n = 0; n < N; ++n)
-    for (int64_t co = 0; co < Cout; ++co)
-      for (int64_t oh = 0; oh < OH; ++oh)
-        for (int64_t ow = 0; ow < OW; ++ow) {
-          float acc = B ? B[co] : 0.f;
-          for (int64_t ci = 0; ci < Cin; ++ci)
-            for (int64_t r = 0; r < kh; ++r) {
-              int64_t ih = oh * stride - pad + r; if (ih < 0 || ih >= H) continue;
-              for (int64_t s = 0; s < kw; ++s) {
-                int64_t iw = ow * stride - pad + s; if (iw < 0 || iw >= W) continue;
-                acc += I[((n * Cin + ci) * H + ih) * W + iw] *
-                       K[((co * Cin + ci) * kh + r) * kw + s];
-              }
+  parallel_for(N * Cout, [&](int64_t nc) {
+    int64_t n = nc / Cout, co = nc % Cout;
+    for (int64_t oh = 0; oh < OH; ++oh)
+      for (int64_t ow = 0; ow < OW; ++ow) {
+        float acc = B ? B[co] : 0.f;
+        for (int64_t ci = 0; ci < Cin; ++ci)
+          for (int64_t r = 0; r < kh; ++r) {
+            int64_t ih = oh * stride - pad + r; if (ih < 0 || ih >= H) continue;
+            for (int64_t s = 0; s < kw; ++s) {
+              int64_t iw = ow * stride - pad + s; if (iw < 0 || iw >= W) continue;
+              acc += I[((n * Cin + ci) * H + ih) * W + iw] *
+                     K[((co * Cin + ci) * kh + r) * kw + s];
             }
-          O[((n * Cout + co) * OH + oh) * OW + ow] = acc;
-        }
+          }
+        O[((n * Cout + co) * OH + oh) * OW + ow] = acc;
+      }
+  });
 
   o->parents = bias ? std::vector<Tensor>{in, w, bias} : std::vector<Tensor>{in, w};
   Node* op = o.get();
@@ -179,26 +180,25 @@ inline Tensor conv2d(const Tensor& in, const Tensor& w, const Tensor& bias,
     const float* GO = op->grad.data();
     float* GI = in->grad.data(); float* GK = w->grad.data();
     // grad wrt input: parallelize over (n,ci) -> disjoint writes
-    #pragma omp parallel for collapse(2)
-    for (int64_t n = 0; n < N; ++n)
-      for (int64_t ci = 0; ci < Cin; ++ci)
-        for (int64_t co = 0; co < Cout; ++co)
-          for (int64_t oh = 0; oh < OH; ++oh)
-            for (int64_t ow = 0; ow < OW; ++ow) {
-              float g = GO[((n * Cout + co) * OH + oh) * OW + ow];
-              if (g == 0.f) continue;
-              for (int64_t r = 0; r < kh; ++r) {
-                int64_t ih = oh * stride - pad + r; if (ih < 0 || ih >= H) continue;
-                for (int64_t s = 0; s < kw; ++s) {
-                  int64_t iw = ow * stride - pad + s; if (iw < 0 || iw >= W) continue;
-                  GI[((n * Cin + ci) * H + ih) * W + iw] +=
-                      g * K[((co * Cin + ci) * kh + r) * kw + s];
-                }
+    parallel_for(N * Cin, [&](int64_t nci) {
+      int64_t n = nci / Cin, ci = nci % Cin;
+      for (int64_t co = 0; co < Cout; ++co)
+        for (int64_t oh = 0; oh < OH; ++oh)
+          for (int64_t ow = 0; ow < OW; ++ow) {
+            float g = GO[((n * Cout + co) * OH + oh) * OW + ow];
+            if (g == 0.f) continue;
+            for (int64_t r = 0; r < kh; ++r) {
+              int64_t ih = oh * stride - pad + r; if (ih < 0 || ih >= H) continue;
+              for (int64_t s = 0; s < kw; ++s) {
+                int64_t iw = ow * stride - pad + s; if (iw < 0 || iw >= W) continue;
+                GI[((n * Cin + ci) * H + ih) * W + iw] +=
+                    g * K[((co * Cin + ci) * kh + r) * kw + s];
               }
             }
+          }
+    });
     // grad wrt weight: parallelize over co -> disjoint writes
-    #pragma omp parallel for
-    for (int64_t co = 0; co < Cout; ++co)
+    parallel_for(Cout, [&](int64_t co) {
       for (int64_t ci = 0; ci < Cin; ++ci)
         for (int64_t r = 0; r < kh; ++r)
           for (int64_t s = 0; s < kw; ++s) {
@@ -214,18 +214,18 @@ inline Tensor conv2d(const Tensor& in, const Tensor& w, const Tensor& bias,
               }
             GK[((co * Cin + ci) * kh + r) * kw + s] += acc;
           }
+    });
     // grad wrt bias
     if (bias) {
       float* GB = bias->grad.data();
-      #pragma omp parallel for
-      for (int64_t co = 0; co < Cout; ++co) {
+      parallel_for(Cout, [&](int64_t co) {
         float acc = 0.f;
         for (int64_t n = 0; n < N; ++n)
           for (int64_t oh = 0; oh < OH; ++oh)
             for (int64_t ow = 0; ow < OW; ++ow)
               acc += GO[((n * Cout + co) * OH + oh) * OW + ow];
         GB[co] += acc;
-      }
+      });
     }
   };
   return o;
@@ -238,23 +238,23 @@ inline Tensor maxpool2d(const Tensor& in, int64_t k, int64_t stride, int64_t pad
   auto o = make_tensor({N, C, OH, OW}, true);
   auto argmax = std::make_shared<std::vector<int64_t>>(o->numel(), -1);
   const float* I = in->data.data(); float* O = o->data.data();
-  #pragma omp parallel for collapse(2)
-  for (int64_t n = 0; n < N; ++n)
-    for (int64_t c = 0; c < C; ++c)
-      for (int64_t oh = 0; oh < OH; ++oh)
-        for (int64_t ow = 0; ow < OW; ++ow) {
-          float best = -1e30f; int64_t bidx = -1;
-          for (int64_t r = 0; r < k; ++r) {
-            int64_t ih = oh * stride - pad + r; if (ih < 0 || ih >= H) continue;
-            for (int64_t s = 0; s < k; ++s) {
-              int64_t iw = ow * stride - pad + s; if (iw < 0 || iw >= W) continue;
-              int64_t idx = ((n * C + c) * H + ih) * W + iw;
-              if (I[idx] > best) { best = I[idx]; bidx = idx; }
-            }
+  parallel_for(N * C, [&](int64_t nc) {
+    int64_t n = nc / C, c = nc % C;
+    for (int64_t oh = 0; oh < OH; ++oh)
+      for (int64_t ow = 0; ow < OW; ++ow) {
+        float best = -1e30f; int64_t bidx = -1;
+        for (int64_t r = 0; r < k; ++r) {
+          int64_t ih = oh * stride - pad + r; if (ih < 0 || ih >= H) continue;
+          for (int64_t s = 0; s < k; ++s) {
+            int64_t iw = ow * stride - pad + s; if (iw < 0 || iw >= W) continue;
+            int64_t idx = ((n * C + c) * H + ih) * W + iw;
+            if (I[idx] > best) { best = I[idx]; bidx = idx; }
           }
-          int64_t oidx = ((n * C + c) * OH + oh) * OW + ow;
-          O[oidx] = best; (*argmax)[oidx] = bidx;
         }
+        int64_t oidx = ((n * C + c) * OH + oh) * OW + ow;
+        O[oidx] = best; (*argmax)[oidx] = bidx;
+      }
+  });
   o->parents = {in};
   Node* op = o.get();
   o->backward_fn = [in, op, argmax] {
@@ -270,21 +270,22 @@ inline Tensor upsample_nearest(const Tensor& in, int64_t f) {
   int64_t OH = H * f, OW = W * f;
   auto o = make_tensor({N, C, OH, OW}, true);
   const float* I = in->data.data(); float* O = o->data.data();
-  #pragma omp parallel for collapse(2)
-  for (int64_t n = 0; n < N; ++n)
-    for (int64_t c = 0; c < C; ++c)
-      for (int64_t oh = 0; oh < OH; ++oh)
-        for (int64_t ow = 0; ow < OW; ++ow)
-          O[((n * C + c) * OH + oh) * OW + ow] = I[((n * C + c) * H + oh / f) * W + ow / f];
+  parallel_for(N * C, [&](int64_t nc) {
+    int64_t n = nc / C, c = nc % C;
+    for (int64_t oh = 0; oh < OH; ++oh)
+      for (int64_t ow = 0; ow < OW; ++ow)
+        O[((n * C + c) * OH + oh) * OW + ow] = I[((n * C + c) * H + oh / f) * W + ow / f];
+  });
   o->parents = {in};
   Node* op = o.get();
   o->backward_fn = [in, op, N, C, H, W, OH, OW, f] {
-    for (int64_t n = 0; n < N; ++n)
-      for (int64_t c = 0; c < C; ++c)
-        for (int64_t oh = 0; oh < OH; ++oh)
-          for (int64_t ow = 0; ow < OW; ++ow)
-            in->grad[((n * C + c) * H + oh / f) * W + ow / f] +=
-                op->grad[((n * C + c) * OH + oh) * OW + ow];
+    parallel_for(N * C, [&](int64_t nc) {
+      int64_t n = nc / C, c = nc % C;
+      for (int64_t oh = 0; oh < OH; ++oh)
+        for (int64_t ow = 0; ow < OW; ++ow)
+          in->grad[((n * C + c) * H + oh / f) * W + ow / f] +=
+              op->grad[((n * C + c) * OH + oh) * OW + ow];
+    });
   };
   return o;
 }

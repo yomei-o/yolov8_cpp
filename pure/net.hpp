@@ -3,6 +3,9 @@
 #pragma once
 #include "autograd.hpp"
 #include <fstream>
+#include <string>
+#include <cstdio>
+#include <cstdlib>
 
 struct ConvW { Tensor w, b; int64_t stride, act; };
 

@@ -10,8 +10,14 @@ build/
 # generated data & model artifacts
 data/
 out/
+scratch/
 pure/ref/data/
 pure/ref/data_*/
+pure/ref/assets/
 *.bin
 *.torchscript
 *.pt
+
+# demo output images (repo root)
+/out*.png
+/*.png

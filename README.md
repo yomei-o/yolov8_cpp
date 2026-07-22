@@ -40,9 +40,16 @@ A minimal reverse-mode autograd engine over dense tensors, then all of yolov8n o
 | `pure/gradcheck*.cpp` | finite-difference gradient checks | max err ~1e-4 |
 | `pure/net.hpp` + `pure/m3c_forward.cpp` | **full yolov8n forward** | matches real net ~3e-5 |
 | `pure/v8pure.hpp` + `pure/m4bc_loss.cpp` | v8 loss forward + **backward** | grads match torch ~1e-9 |
+| `pure/m5_train.cpp` | **end-to-end training** (forward→TAL→loss→backward→SGD) | loss 12.6 → 6.2 |
+| `pure/infer.hpp` + `pure/m6_infer.cpp` | **inference: DFL decode + NMS** | dets match ultralytics ~8e-5 |
+| `pure/m6_demo.cpp` | **real-image inference** (stb_image → letterbox → detect → annotate) | bus + 4 people |
 
 BatchNorm is folded into the preceding conv; `pure/ops2d.hpp` holds the extra
-differentiable ops used by the loss.
+differentiable ops used by the loss. `pure/parallel.hpp` gives a `parallel_for` that
+uses OpenMP under `g++ -fopenmp` and a `std::thread` fan-out otherwise, so the same
+source parallelises under g++ **and** MSVC (whose OpenMP can't parse the pragmas the
+autograd tape needs inside lambdas). The inference demo needs only two public-domain
+single-header libraries, vendored in `pure/third_party/` (stb_image / stb_image_write).
 
 ## Build
 
@@ -50,6 +57,16 @@ Pure track (nothing but a compiler):
 ```sh
 g++ -std=c++20 -O2            pure/m3c_forward.cpp -o m3c.exe   # CPU
 g++ -std=c++20 -O2 -fopenmp   pure/m3c_forward.cpp -o m3c.exe   # OpenMP (same result)
+
+# MSVC (from a "x64 Native Tools" prompt) — std::thread parallelism, no OpenMP flag:
+cl /std:c++20 /O2 /EHsc pure/m3c_forward.cpp
+```
+
+Inference on a real image (only the two vendored single-header libs, no other deps):
+```sh
+python pure/ref/export_net.py 640          # dump yolov8n weights once (any imgsz)
+g++ -std=c++20 -O2 pure/m6_demo.cpp -o m6_demo.exe
+./m6_demo.exe pure/ref/assets/bus.jpg out.png 640
 ```
 
 LibTorch track (CMake + LibTorch 2.13 CPU, C++20):
@@ -58,14 +75,18 @@ cmake -B build -S . -A x64
 cmake --build build --config Release
 ```
 
-References (needs `pip install ultralytics torch`):
+References (`pip install ultralytics torch==2.5.1`):
 ```sh
-python pure/ref/m3c_export.py     # dump yolov8n weights + reference output
-python ref/loss_ref.py            # dump loss/grad reference
+python pure/ref/export_net.py 640     # yolov8n weights + reference forward (any imgsz)
+python pure/ref/m6_infer_ref.py 640   # preprocessed image + reference decode/NMS
+python ref/loss_ref.py                # dump loss/grad reference (LibTorch track)
 ```
 
 ## Status
 DFL decode, CIoU, TAL, the full v8 loss (forward + backward), the full yolov8n
-forward, and training all reproduced and verified. Remaining: port TAL into the
-pure engine and close the pure end-to-end training loop; optional CUDA backend
-behind the conv seam.
+forward, **end-to-end training**, and **inference (DFL decode + NMS on a real image)**
+all reproduced and verified against Ultralytics — in the pure engine, standard library
+plus two single-header image libs only. Both g++ (OpenMP) and MSVC (std::thread) build
+and parallelise from one source. Remaining: BatchNorm as a trainable op + `.pt`
+round-trip, data-driven net for s/m/l/x, and an optional CUDA backend behind the conv
+seam (see [ROADMAP.md](ROADMAP.md)).
