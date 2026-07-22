@@ -15,6 +15,7 @@ pure/ref/data/
 pure/ref/data_*/
 pure/ref/assets/
 *.bin
+*.onnx
 *.torchscript
 *.pt
 
