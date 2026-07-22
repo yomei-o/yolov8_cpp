@@ -13,6 +13,7 @@ forward, ~1e-8 on gradients).
 
 **→ [PORTING_GUIDE.md](PORTING_GUIDE.md): how to port a Python YOLO's training to C++**
 (the methodology, gotchas, and how to adapt it to yolov5 / yolov11).
+**→ [ROADMAP.md](ROADMAP.md): planned work** (.pt read/write, ONNX I/O, s/m/l/x models, …).
 
 ## Two tracks
 
