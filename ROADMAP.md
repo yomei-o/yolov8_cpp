@@ -13,8 +13,11 @@
   pickle パーサが要る (中規模)。まずは **Python ブリッジ**で実用化する:
   - 読み: `state_dict()` を走査して融合重み or 生重みを flat `.bin` + manifest に出す
     (現状 `pure/ref/m3c_export.py` がこれ。汎用化する)。
-  - 書き戻し: C++ が学習した重みを flat `.bin` に出す → Python が `model.state_dict()` に
-    流し込んで `torch.save` で `.pt` 化 → Ultralytics でそのまま推論できるようにする。
+  - ✅ **書き戻しは実装済み** (`pure/m9_train_writeback.cpp` + `pure/ref/writeback_pt.py`):
+    C++ が unfused な重み (conv + BN γ/β/running stats) を flat `.bin` に出す → Python が
+    `yolo_walk.py` の正準順で state_dict に流し込み `.pt` 化 → Ultralytics がそのまま推論。
+    シリアライズは完全一致 (0.0)、未学習重みでは forward も ~2e-5 で一致、C++ 学習後の重みでも
+    Ultralytics がロード・推論できることを確認済み。
 - **重要 (BN の扱い):** 現在は推論用に BN を conv に**融合**している。学習した重みを `.pt` に
   戻して再学習/微調整するには、**BN を融合せず独立の学習可能 op として持つ**必要がある
   (→ エンジンに BatchNorm op を追加、下記 C-1)。融合版は「推論専用の書き出し」に留める。
@@ -47,8 +50,9 @@
 
 ## C. エンジン拡張 (engine)
 
-- **C-1. BatchNorm を学習可能 op に** (forward/backward + running stats 更新)。融合をやめて
-  conv+BN+act を別々に持てば `.pt` 学習ラウンドトリップ (A-1) が可能になる。
+- ✅ **C-1. BatchNorm を学習可能 op に** — 実装済み (`pure/bn.hpp`, `pure/m7_bn.cpp`)。
+  forward/backward + running stats 更新、train/eval 両モードで torch と一致 (~1e-7)。
+  unfused な conv+BN+SiLU 版フォワード (`pure/net_unfused.hpp`) も本家と一致 (~2e-5)。
 - **C-2. optimizer**: 現状 SGD 直書き。Adam / momentum / weight decay / LR スケジュール。
 - **C-3. matmul op**: v11 の C2PSA (attention) に必要 (下記 D-1)。
 - **C-4. CUDA バックエンド**: conv 等を `#ifdef USE_CUDA` 境界の裏に隠して差し込む

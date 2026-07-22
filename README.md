@@ -43,9 +43,15 @@ A minimal reverse-mode autograd engine over dense tensors, then all of yolov8n o
 | `pure/m5_train.cpp` | **end-to-end training** (forward→TAL→loss→backward→SGD) | loss 12.6 → 6.2 |
 | `pure/infer.hpp` + `pure/m6_infer.cpp` | **inference: DFL decode + NMS** | dets match ultralytics ~8e-5 |
 | `pure/m6_demo.cpp` | **real-image inference** (stb_image → letterbox → detect → annotate) | bus + 4 people |
+| `pure/bn.hpp` + `pure/m7_bn.cpp` | **BatchNorm2d as a trainable op** (fwd/bwd + running stats) | match torch ~1e-7 |
+| `pure/net_unfused.hpp` + `pure/m8_forward_unfused.cpp` | full forward with conv+BN+SiLU **unfused** | matches net ~2e-5 |
+| `pure/m9_train_writeback.cpp` | **train (live BN) → write weights back to `.pt`** | serialization exact; Ultralytics runs it |
 
-BatchNorm is folded into the preceding conv; `pure/ops2d.hpp` holds the extra
-differentiable ops used by the loss. `pure/parallel.hpp` gives a `parallel_for` that
+For inference BatchNorm is folded into the preceding conv; for training/round-trip the
+unfused path (`pure/bn.hpp` + `pure/net_unfused.hpp`) keeps conv/BN separate so weights
+map straight back into a standard `yolov8n.pt` (`pure/ref/writeback_pt.py` — a Python
+bridge that drops C++ weights into the state_dict and `torch.save`s a runnable `.pt`).
+`pure/ops2d.hpp` holds the extra differentiable ops used by the loss. `pure/parallel.hpp` gives a `parallel_for` that
 uses OpenMP under `g++ -fopenmp` and a `std::thread` fan-out otherwise, so the same
 source parallelises under g++ **and** MSVC (whose OpenMP can't parse the pragmas the
 autograd tape needs inside lambdas). The inference demo needs only two public-domain
@@ -78,15 +84,19 @@ cmake --build build --config Release
 References (`pip install ultralytics torch==2.5.1`):
 ```sh
 python pure/ref/export_net.py 640     # yolov8n weights + reference forward (any imgsz)
+python pure/ref/export_unfused.py 64  # unfused conv+BN weights (training / .pt round-trip)
 python pure/ref/m6_infer_ref.py 640   # preprocessed image + reference decode/NMS
+python pure/ref/bn_ref.py             # BatchNorm2d reference
+python pure/ref/writeback_pt.py       # after m9: C++ weights -> yolov8n_cpp.pt (Ultralytics-runnable)
 python ref/loss_ref.py                # dump loss/grad reference (LibTorch track)
 ```
 
 ## Status
 DFL decode, CIoU, TAL, the full v8 loss (forward + backward), the full yolov8n
-forward, **end-to-end training**, and **inference (DFL decode + NMS on a real image)**
-all reproduced and verified against Ultralytics — in the pure engine, standard library
-plus two single-header image libs only. Both g++ (OpenMP) and MSVC (std::thread) build
-and parallelise from one source. Remaining: BatchNorm as a trainable op + `.pt`
-round-trip, data-driven net for s/m/l/x, and an optional CUDA backend behind the conv
-seam (see [ROADMAP.md](ROADMAP.md)).
+forward, **end-to-end training**, **inference (DFL decode + NMS on a real image)**,
+**BatchNorm as a trainable op**, and a **`.pt` write-back round-trip** (train in C++ →
+standard `yolov8n.pt` → runs in Ultralytics) all reproduced and verified against
+Ultralytics — in the pure engine, standard library plus two single-header image libs
+only. Both g++ (OpenMP) and MSVC (std::thread) build and parallelise from one source.
+Remaining: data-driven net for s/m/l/x, ONNX import, optimizers (Adam), and an optional
+CUDA backend behind the conv seam (see [ROADMAP.md](ROADMAP.md)).
