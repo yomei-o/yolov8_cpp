@@ -134,5 +134,14 @@ only. Both g++ (OpenMP) and MSVC (std::thread) build and parallelise from one so
 A **data-driven builder** runs any size (n/s/m/l/x) from an arch manifest, and a
 self-contained **ONNX reader/writer** exports the net to a standard `.onnx`
 (onnxruntime-verified) and runs a `.onnx` graph-driven in the pure engine — no external
-libraries. Remaining: real dataloader + mAP, LR schedule, and an optional CUDA backend
-behind the conv seam (see [ROADMAP.md](ROADMAP.md)).
+libraries. Remaining: mAP evaluation and an optional CUDA backend behind the conv seam
+(see [ROADMAP.md](ROADMAP.md)).
+
+## Licenses & attribution
+Bundled third-party components keep their own licenses — see
+**[THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)**:
+- `yolov8n.pt`, `weights/yolov8n/*` (derived from it) and `assets/*.jpg` are **Ultralytics
+  YOLOv8**, **AGPL-3.0** — redistributing this repo carries the AGPL obligations for them.
+- `pure/third_party/stb_*.h` are **stb** (public-domain / MIT).
+
+The repository's own code has no top-level license yet; add a `LICENSE` to declare it.
