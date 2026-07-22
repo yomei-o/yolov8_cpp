@@ -180,9 +180,10 @@ inline Tensor conv2d(const Tensor& in, const Tensor& w, const Tensor& bias,
   float* O = o->data.data();
 
   for (int64_t n = 0; n < N; ++n) {
-    std::vector<float> col(K * P);
-    im2col_(in->data.data() + n * Cin * H * W, Cin, H, W, kh, kw, OH, OW, stride, pad, col.data());
-    const float* colp = col.data();
+    thread_local std::vector<float> colf;                 // reused across conv calls
+    colf.resize(K * P);
+    im2col_(in->data.data() + n * Cin * H * W, Cin, H, W, kh, kw, OH, OW, stride, pad, colf.data());
+    const float* colp = colf.data();
     float* On = O + n * Cout * P;
     parallel_for(Cout, [&](int64_t co) {
       float* orow = On + co * P;
@@ -205,9 +206,10 @@ inline Tensor conv2d(const Tensor& in, const Tensor& w, const Tensor& bias,
       parallel_for(Cout, [&](int64_t co) { double a = 0; for (int64_t n = 0; n < N; ++n) { const float* g = op->grad.data() + (n * Cout + co) * P; for (int64_t p = 0; p < P; ++p) a += g[p]; } GB[co] += (float)a; });
     }
     for (int64_t n = 0; n < N; ++n) {
-      std::vector<float> col(K * P);
-      im2col_(in->data.data() + n * Cin * H * W, Cin, H, W, kh, kw, OH, OW, stride, pad, col.data());
-      const float* colp = col.data();
+      thread_local std::vector<float> colb;
+      colb.resize(K * P);
+      im2col_(in->data.data() + n * Cin * H * W, Cin, H, W, kh, kw, OH, OW, stride, pad, colb.data());
+      const float* colp = colb.data();
       const float* GOn = op->grad.data() + n * Cout * P;
       // dW += dO(Cout,P) . col(K,P)^T  (row dot products, contiguous over P)
       parallel_for(Cout, [&](int64_t co) {
@@ -215,16 +217,18 @@ inline Tensor conv2d(const Tensor& in, const Tensor& w, const Tensor& bias,
         for (int64_t k = 0; k < K; ++k) { const float* crow = colp + k * P; float a = 0; for (int64_t p = 0; p < P; ++p) a += g[p] * crow[p]; gk[k] += a; }
       });
       // dcol = W^T(K,Cout) @ dO(Cout,P), then col2im -> dIn
-      std::vector<float> dcol(K * P, 0.f);
+      thread_local std::vector<float> dcolb;
+      dcolb.assign(K * P, 0.f);
+      float* dcol = dcolb.data();
       parallel_for(K, [&](int64_t k) {
-        float* dcrow = dcol.data() + k * P;
+        float* dcrow = dcol + k * P;
         for (int64_t co = 0; co < Cout; ++co) { float wv = Wd[co * K + k]; const float* g = GOn + co * P; for (int64_t p = 0; p < P; ++p) dcrow[p] += wv * g[p]; }
       });
       float* GIn = GI + n * Cin * H * W;
       parallel_for(Cin, [&](int64_t ci) {
         for (int64_t r = 0; r < kh; ++r)
           for (int64_t s = 0; s < kw; ++s) {
-            const float* dcrow = dcol.data() + (((ci * kh + r) * kw + s) * P);
+            const float* dcrow = dcol + (((ci * kh + r) * kw + s) * P);
             for (int64_t oh = 0; oh < OH; ++oh) {
               int64_t ih = oh * stride - pad + r; if (ih < 0 || ih >= H) continue;
               float* girow = GIn + (ci * H + ih) * W;
