@@ -48,6 +48,7 @@ A minimal reverse-mode autograd engine over dense tensors, then all of yolov8n o
 | `pure/m9_train_writeback.cpp` | **train (live BN) → write weights back to `.pt`** | serialization exact; Ultralytics runs it |
 | `pure/optim.hpp` + `pure/m10_optim.cpp` | **optimizers** (SGD/mom/WD/Nesterov, Adam, AdamW) | match torch.optim ~1e-7 |
 | `pure/linalg.hpp` + `pure/m11_matmul.cpp` | **matmul + transpose** (for v11 attention) | match torch ~1e-7 |
+| `pure/net_dyn.hpp` + `pure/m12_dyn.cpp` | **data-driven net** (arch manifest, any size) | n / s / m match ~1e-4 |
 
 For inference BatchNorm is folded into the preceding conv; for training/round-trip the
 unfused path (`pure/bn.hpp` + `pure/net_unfused.hpp`) keeps conv/BN separate so weights

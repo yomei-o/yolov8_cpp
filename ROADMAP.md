@@ -38,13 +38,12 @@
 - yolov8 の n/s/m/l/x は **depth/width 乗数**と max_channels が違うだけで構造は同系
   (depth 0.33/0.33/0.67/1.0/1.0, width 0.25/0.5/0.75/1.0/1.25)。C2f の繰り返し数 (n_bott) と
   各層チャンネルが変わる。
-- 現状 `pure/net.hpp` は n 用に **接続と n_bott をハードコード**している。対応方針:
-  - **データ駆動化**: エクスポータが「各層の型・チャンネル・n_bott・接続 (from)」を manifest に
-    書き出し、`net.hpp` がそれを読んで汎用に組み立てる。yaml (`ultralytics/cfg/models`) を
-    パースしても同じ。
-  - これができると s/m/l/x は manifest 差し替えだけ、さらに A-2 (ONNX import) と統合すれば
-    任意モデルが読み込みで動く。
-- 検証は各サイズで M3c (順伝播一致) → 学習、と同じ刻みで。
+- ✅ **データ駆動化 実装済み** (`pure/net_dyn.hpp`, `pure/m12_dyn.cpp`,
+  `pure/ref/export_arch.py`): エクスポータが層グラフ (type / from / C2f depth など) を
+  `arch.txt` に書き出し、汎用ビルダがそれを読んで組み立てる。**yolov8n / s / m** の順伝播が
+  本家と一致 (~1e-4) することを確認 (n=63 conv, m=83 conv, 同一コード)。l/x も `export_arch.py`
+  で重みを出すだけで動くはず。
+  - 残り: A-2 (ONNX import) と統合すれば任意モデルが読み込みで動く。学習・推論デモを各サイズで。
 
 ---
 
