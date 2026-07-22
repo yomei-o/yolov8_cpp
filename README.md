@@ -11,6 +11,9 @@ dependencies** (a from-scratch autograd engine, C++ standard library only).
 Every step is **verified numerically against PyTorch / Ultralytics** (bit-level on
 forward, ~1e-8 on gradients).
 
+**→ [PORTING_GUIDE.md](PORTING_GUIDE.md): how to port a Python YOLO's training to C++**
+(the methodology, gotchas, and how to adapt it to yolov5 / yolov11).
+
 ## Two tracks
 
 ### 1. LibTorch track — port the v8 loss, then train the real yolov8n
