@@ -88,8 +88,9 @@
   - ✅ **実装済み** (`pure/dataset.hpp`, `pure/m14_train_real.cpp`): stb_image で画像を読み
     letterbox、YOLO ラベルを読んで gt を letterbox 画像座標に変換。実画像＋実ラベル
     (Ultralytics 検出を疑似 GT に) で unfused BN 学習 → TAL → v8 loss → Adam + cosine LR、
-    loss が 7.9 → 1.1 に低下。推論描画は `pure/m6_demo.cpp`。
-    残り: 複数画像バッチ・データ拡張。
+    loss が低下。**ミニバッチ対応済み** (`Batch load_batch()` が複数画像を letterbox して
+    GT をパディング＋マスク; bus+zidane の 2 枚バッチで loss 8.4 → 1.2)。推論描画は
+    `pure/m6_demo.cpp`。残り: データ拡張、チェックポイント運用。
 - **E-2. 推論経路**: ✅ **実装済み** (`pure/infer.hpp` + `pure/m6_infer.cpp`):
   DFL デコード + アンカー/stride + sigmoid + クラス別 NMS。Ultralytics の eval 出力と
   NMS 結果に一致 (box ~8e-5, 同一クラス・件数)。デコードは xyxy 出力
