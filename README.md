@@ -51,6 +51,7 @@ A minimal reverse-mode autograd engine over dense tensors, then all of yolov8n o
 | `pure/net_dyn.hpp` + `pure/m12_dyn.cpp` | **data-driven net** (arch manifest, any size) | n / s / m match ~1e-4 |
 | `pure/onnx.hpp` + `pure/onnx_export.cpp` | **ONNX writer** (hand-rolled protobuf, no deps) | onnxruntime runs it, ~2e-5 |
 | `pure/onnx_run.hpp` + `pure/m13_onnx_run.cpp` | **ONNX reader + graph interpreter** | pure engine runs the `.onnx`, ~2e-5 |
+| `pure/dataset.hpp` + `pure/m14_train_real.cpp` | **real-data training** (stb image + labels → TAL → loss → Adam/cosine) | loss 7.9 → 1.1 |
 
 For inference BatchNorm is folded into the preceding conv; for training/round-trip the
 unfused path (`pure/bn.hpp` + `pure/net_unfused.hpp`) keeps conv/BN separate so weights
@@ -76,7 +77,7 @@ cl /std:c++20 /O2 /EHsc pure/m3c_forward.cpp
 Inference on a real image (only the two vendored single-header libs, no other deps):
 ```sh
 python pure/ref/export_net.py 640          # dump yolov8n weights once (any imgsz)
-g++ -std=c++20 -O2 pure/m6_demo.cpp -o m6_demo.exe
+g++ -std=c++20 -O2 -Ipure/third_party pure/m6_demo.cpp -o m6_demo.exe
 ./m6_demo.exe pure/ref/assets/bus.jpg out.png 640
 ```
 

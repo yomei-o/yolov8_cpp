@@ -7,6 +7,13 @@
 #include <cmath>
 #include <algorithm>
 
+// Cosine LR schedule with linear warmup (like ultralytics/torch schedulers).
+inline float cosine_lr(int step, int total, float base, int warmup = 0, float min_lr = 0.f) {
+  if (step < warmup) return base * (float)(step + 1) / (float)std::max(1, warmup);
+  float t = (float)(step - warmup) / (float)std::max(1, total - warmup);
+  return min_lr + 0.5f * (base - min_lr) * (1.f + std::cos(3.14159265358979f * std::min(1.f, t)));
+}
+
 struct SGD {
   std::vector<Tensor> params; float lr, momentum, wd; bool nesterov;
   std::vector<std::vector<float>> buf; bool started = false;

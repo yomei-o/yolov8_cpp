@@ -6,9 +6,9 @@
 //   build:  cl /std:c++20 /O2 /EHsc pure/m6_demo.cpp        (or g++ -std=c++20 -O2)
 //   run:    m6_demo pure/ref/assets/bus.jpg out.png [imgsz]
 #define STB_IMAGE_IMPLEMENTATION
-#include "third_party/stb_image.h"
+#include "stb_image.h"                  // add -Ipure/third_party
 #define STB_IMAGE_WRITE_IMPLEMENTATION
-#include "third_party/stb_image_write.h"
+#include "stb_image_write.h"
 #include "net.hpp"
 #include "infer.hpp"
 #include <cstdio>
