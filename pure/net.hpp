@@ -34,6 +34,25 @@ inline Provider load_net(const std::string& D) {
   return p;
 }
 
+// Load fused weights from a single packed blob (manifest.txt + weights.bin): per layer
+// the file holds [w data][b data] in order. This is what ships in the repo so the pure
+// inference demo runs with just a compiler (no Python export step).
+inline Provider load_net_blob(const std::string& D) {
+  std::ifstream f(D + "manifest.txt"); if (!f) { printf("cannot open %smanifest.txt\n", D.c_str()); std::exit(1); }
+  int n; f >> n;
+  std::vector<float> blob = rd(D + "weights.bin");
+  Provider p; size_t off = 0;
+  for (int i = 0; i < n; ++i) {
+    int64_t Co, Ci, k, s, act; f >> Co >> Ci >> k >> s >> act;
+    int64_t wn = Co * Ci * k * k;
+    ConvW c; c.stride = s; c.act = act;
+    c.w = from_data({Co, Ci, k, k}, std::vector<float>(blob.begin() + off, blob.begin() + off + wn)); off += wn;
+    c.b = from_data({Co}, std::vector<float>(blob.begin() + off, blob.begin() + off + Co)); off += Co;
+    p.convs.push_back(c);
+  }
+  return p;
+}
+
 // pack per-level (B,C,h,w) feature maps into (B*Atot, C), anchor-major per batch.
 inline Tensor pack_levels(const std::vector<Tensor>& lv, int64_t B, int64_t Atot, int64_t C) {
   auto o = make_tensor({B * Atot, C}, true);

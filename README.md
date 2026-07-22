@@ -13,7 +13,35 @@ forward, ~1e-8 on gradients).
 
 **→ [PORTING_GUIDE.md](PORTING_GUIDE.md): how to port a Python YOLO's training to C++**
 (the methodology, gotchas, and how to adapt it to yolov5 / yolov11).
-**→ [ROADMAP.md](ROADMAP.md): planned work** (.pt read/write, ONNX I/O, s/m/l/x models, …).
+**→ [ROADMAP.md](ROADMAP.md): planned work**.
+
+## Demo — real-image detection, no Python, no libraries
+
+Weights ship in the repo (`weights/yolov8n/`, packed fused conv weights) plus the
+original `yolov8n.pt`, so the pure detector runs straight from a checkout with only a
+C++ compiler and the two vendored single-header image libs:
+
+```sh
+g++ -std=c++20 -O2 -Ipure/third_party pure/m6_demo.cpp -o m6_demo    # or: cl /std:c++20 /O2 /EHsc /Ipure\third_party pure\m6_demo.cpp
+./m6_demo assets/bus.jpg    bus_out.png    640
+./m6_demo assets/zidane.jpg zidane_out.png 640
+```
+
+| `assets/bus.jpg` → | `assets/zidane.jpg` → |
+|---|---|
+| ![bus](assets/bus_detected.png) | ![zidane](assets/zidane_detected.png) |
+
+```
+assets/bus.jpg  810x1080         assets/zidane.jpg  1280x720
+  person conf=0.89               person conf=0.83
+  person conf=0.88               person conf=0.83
+  person conf=0.88               tie    conf=0.29
+  bus    conf=0.84
+  person conf=0.44
+```
+
+These match Ultralytics' own yolov8n output (boxes to ~8e-5 on the letterboxed input,
+same classes — see `pure/m6_infer.cpp`). The decode + NMS are in `pure/infer.hpp`.
 
 ## Two tracks
 
@@ -74,12 +102,9 @@ g++ -std=c++20 -O2 -fopenmp   pure/m3c_forward.cpp -o m3c.exe   # OpenMP (same r
 cl /std:c++20 /O2 /EHsc pure/m3c_forward.cpp
 ```
 
-Inference on a real image (only the two vendored single-header libs, no other deps):
-```sh
-python pure/ref/export_net.py 640          # dump yolov8n weights once (any imgsz)
-g++ -std=c++20 -O2 -Ipure/third_party pure/m6_demo.cpp -o m6_demo.exe
-./m6_demo.exe pure/ref/assets/bus.jpg out.png 640
-```
+Inference on a real image — weights ship in `weights/yolov8n/`, so no Python needed
+(see the Demo section above). To (re)generate weights from `yolov8n.pt` yourself:
+`python pure/ref/export_net.py` writes `pure/ref/data_net/{manifest.txt,weights.bin}`.
 
 LibTorch track (CMake + LibTorch 2.13 CPU, C++20):
 ```sh

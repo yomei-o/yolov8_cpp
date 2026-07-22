@@ -41,12 +41,18 @@ for i in range(3):
     for m in det.cv2[i]: emit(m)
     for m in det.cv3[i]: emit(m)
 
+import numpy as np
 def save(n, t): t.detach().contiguous().float().cpu().numpy().tofile(os.path.join(D, n))
 lines = [str(len(convs))]
+blob = []
 for i, (w, b, k, s, act) in enumerate(convs):
     save(f"w{i}.bin", w); save(f"b{i}.bin", b)
+    blob.append(w.detach().contiguous().float().cpu().numpy().ravel())
+    blob.append(b.detach().contiguous().float().cpu().numpy().ravel())
     lines.append(f"{w.shape[0]} {w.shape[1]} {k} {s} {act}")
 open(os.path.join(D, "manifest.txt"), "w").write("\n".join(lines) + "\n")
+# single packed blob (manifest.txt + weights.bin) for the shipped, Python-free demo
+np.concatenate(blob).astype(np.float32).tofile(os.path.join(D, "weights.bin"))
 
 # reference boxes/scores. In train mode this Ultralytics head returns a dict with
 # 'boxes' (1, 4*rm, Atot) and 'scores' (1, nc, Atot) already in the packed anchor

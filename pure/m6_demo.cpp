@@ -37,9 +37,10 @@ static Color class_color(int c) {                       // vivid, well-separated
 }
 
 int main(int argc, char** argv) {
-  std::string img = argc > 1 ? argv[1] : "pure/ref/assets/bus.jpg";
+  std::string img = argc > 1 ? argv[1] : "assets/bus.jpg";
   std::string outp = argc > 2 ? argv[2] : "out.png";
   int64_t S = argc > 3 ? atoll(argv[3]) : 640;
+  std::string wdir = argc > 4 ? argv[4] : "weights/yolov8n/";     // shipped packed weights
   const int64_t NC = 80, RM = 16;
   const float CONF = 0.25f, IOU = 0.7f;
 
@@ -70,8 +71,8 @@ int main(int argc, char** argv) {
       }
     }
 
-  printf("forward (%lldx%lld, naive conv, single-thread)...\n", (long long)S, (long long)S);
-  auto prov = load_net("pure/ref/data_net/");
+  printf("forward (%lldx%lld, naive conv)...\n", (long long)S, (long long)S);
+  auto prov = load_net_blob(wdir);
   prov.i = 0;
   auto lv = yolov8n_forward(x, prov);
   int64_t A = 0; for (auto& p : lv) A += p.first->shape[2] * p.first->shape[3];
