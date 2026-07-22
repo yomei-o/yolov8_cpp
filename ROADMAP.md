@@ -23,13 +23,18 @@
   (→ エンジンに BatchNorm op を追加、下記 C-1)。融合版は「推論専用の書き出し」に留める。
 - 将来: zip + pickle の最小 reader/writer を C++ に実装して Python 非依存の `.pt` I/O。
 
-### A-2. ONNX 入出力
-- **エクスポート (推論相互運用):** 順伝播を ONNX グラフ (protobuf) として出力。まずは
-  Python 側 (`torch.onnx.export` / `ultralytics export`) を使い、C++ 推論結果と照合。
-- **インポート (これが本命):** ONNX を C++ でパースして**グラフ駆動で forward を構築**すれば、
-  アーキをハードコードせずに済む → s/m/l/x や v11 が「読むだけ」で動く (下記 B と直結)。
-  protobuf パーサ + 対応 op のディスパッチテーブルを用意する。
-- 注意: ONNX の学習サポートは限定的。ONNX は推論/交換用、**学習は自作エンジン**のまま。
+### A-2. ONNX 入出力 ✅ 実装済み
+- **エクスポート:** ✅ 自前の protobuf writer (`pure/onnx.hpp`) + `pure/onnx_export.cpp` で
+  順伝播を標準 ONNX (opset 13: Conv / Sigmoid+Mul / MaxPool / Resize / Concat / Add / Slice)
+  として出力。**onnxruntime で実行して本家 forward と一致 (~2e-5)**、`onnx.checker` も通過
+  (n=223, m=289 ノード)。外部ライブラリ不使用。
+- **インポート (本命):** ✅ `pure/onnx.hpp` の protobuf reader + `pure/onnx_run.hpp` の
+  **グラフ駆動インタプリタ**で、`.onnx` をパースして pure ops で実行 (`pure/m13_onnx_run.cpp`)。
+  アーキ manifest も重み Provider も不要で `.onnx` だけから forward を再現 (~2e-5)。
+  onnx ライブラリで再シリアライズした (packed) ファイルも読める。
+  - 残り: 対応 op は yolov8 backbone+head の範囲。Ultralytics が in-graph デコード込みで
+    出力する ONNX (Reshape/Transpose/Softmax/Sub/Div/Gather 等) を読むには op を追加。
+- 注意: ONNX は推論/交換用、**学習は自作エンジン**のまま。
 
 ---
 

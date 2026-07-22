@@ -102,4 +102,92 @@ inline void save_onnx(const Graph& g, const std::string& path) {
   std::ofstream f(path, std::ios::binary); f.write(mp.b.data(), mp.b.size());
 }
 
+// ============================ protobuf reader ============================
+struct RD {
+  const uint8_t* p; const uint8_t* end;
+  bool eof() const { return p >= end; }
+  uint64_t varint() { uint64_t r = 0; int sh = 0; while (p < end) { uint8_t b = *p++; r |= (uint64_t)(b & 0x7f) << sh; if (!(b & 0x80)) break; sh += 7; } return r; }
+  bool tag(int& field, int& wt) { if (p >= end) return false; uint64_t k = varint(); field = (int)(k >> 3); wt = (int)(k & 7); return true; }
+  std::string bytes() { uint64_t n = varint(); std::string s((const char*)p, n); p += n; return s; }
+  RD sub() { uint64_t n = varint(); RD r{p, p + n}; p += n; return r; }
+  float f32() { uint32_t u; std::memcpy(&u, p, 4); p += 4; float f; std::memcpy(&f, &u, 4); return f; }
+  void skip(int wt) { if (wt == 0) varint(); else if (wt == 2) { uint64_t n = varint(); p += n; } else if (wt == 5) p += 4; else if (wt == 1) p += 8; }
+};
+
+inline void parse_tensor(RD r, Graph& g) {
+  std::vector<int64_t> dims; int dtype = 1; std::string name, raw; std::vector<float> fdata; std::vector<int64_t> idata;
+  int f, wt;
+  while (r.tag(f, wt)) {
+    if (f == 1) { if (wt == 2) { RD s = r.sub(); while (!s.eof()) dims.push_back((int64_t)s.varint()); } else dims.push_back((int64_t)r.varint()); }
+    else if (f == 2) dtype = (int)r.varint();
+    else if (f == 8) name = r.bytes();
+    else if (f == 9) raw = r.bytes();
+    else if (f == 4) { if (wt == 2) { RD s = r.sub(); while (!s.eof()) fdata.push_back(s.f32()); } else fdata.push_back(r.f32()); }
+    else if (f == 7) { if (wt == 2) { RD s = r.sub(); while (!s.eof()) idata.push_back((int64_t)s.varint()); } else idata.push_back((int64_t)r.varint()); }
+    else r.skip(wt);
+  }
+  if (dtype == 7) {                                   // INT64
+    IntsTensor t; t.name = name; t.dims = dims;
+    if (!raw.empty()) { t.data.resize(raw.size() / 8); std::memcpy(t.data.data(), raw.data(), raw.size()); }
+    else t.data = idata;
+    g.init_i.push_back(std::move(t));
+  } else {                                            // FLOAT
+    Tensor64 t; t.name = name; t.dims = dims;
+    if (!raw.empty()) { t.data.resize(raw.size() / 4); std::memcpy(t.data.data(), raw.data(), raw.size()); }
+    else t.data = fdata;
+    g.init_f.push_back(std::move(t));
+  }
+}
+
+inline Attr parse_attr(RD r) {
+  Attr a; int f, wt;
+  while (r.tag(f, wt)) {
+    if (f == 1) a.name = r.bytes();
+    else if (f == 20) a.type = (int)r.varint();
+    else if (f == 2) a.f = r.f32();
+    else if (f == 3) a.i = (int64_t)r.varint();
+    else if (f == 4) a.s = r.bytes();
+    else if (f == 7) { if (wt == 2) { RD s = r.sub(); while (!s.eof()) a.floats.push_back(s.f32()); } else a.floats.push_back(r.f32()); }
+    else if (f == 8) { if (wt == 2) { RD s = r.sub(); while (!s.eof()) a.ints.push_back((int64_t)s.varint()); } else a.ints.push_back((int64_t)r.varint()); }
+    else r.skip(wt);
+  }
+  return a;
+}
+inline Node parse_node(RD r) {
+  Node n; int f, wt;
+  while (r.tag(f, wt)) {
+    if (f == 1) n.input.push_back(r.bytes());
+    else if (f == 2) n.output.push_back(r.bytes());
+    else if (f == 3) n.name = r.bytes();
+    else if (f == 4) n.op_type = r.bytes();
+    else if (f == 5) n.attr.push_back(parse_attr(r.sub()));
+    else r.skip(wt);
+  }
+  return n;
+}
+inline std::string parse_valueinfo_name(RD r) {
+  int f, wt; std::string name;
+  while (r.tag(f, wt)) { if (f == 1) name = r.bytes(); else r.skip(wt); }
+  return name;
+}
+inline void parse_graph(RD r, Graph& g) {
+  int f, wt;
+  while (r.tag(f, wt)) {
+    if (f == 1) g.nodes.push_back(parse_node(r.sub()));
+    else if (f == 5) parse_tensor(r.sub(), g);
+    else if (f == 11) g.inputs.push_back({parse_valueinfo_name(r.sub()), {}});
+    else if (f == 12) g.outputs.push_back({parse_valueinfo_name(r.sub()), {}});
+    else r.skip(wt);
+  }
+}
+inline Graph load_onnx(const std::string& path) {
+  std::ifstream f(path, std::ios::binary | std::ios::ate);
+  if (!f) { printf("cannot open %s\n", path.c_str()); std::exit(1); }
+  auto n = f.tellg(); f.seekg(0); std::string buf(n, '\0'); f.read(buf.data(), n);
+  Graph g; RD r{(const uint8_t*)buf.data(), (const uint8_t*)buf.data() + buf.size()};
+  int fld, wt;
+  while (r.tag(fld, wt)) { if (fld == 7) parse_graph(r.sub(), g); else r.skip(wt); }
+  return g;
+}
+
 }  // namespace onx

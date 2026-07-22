@@ -49,6 +49,8 @@ A minimal reverse-mode autograd engine over dense tensors, then all of yolov8n o
 | `pure/optim.hpp` + `pure/m10_optim.cpp` | **optimizers** (SGD/mom/WD/Nesterov, Adam, AdamW) | match torch.optim ~1e-7 |
 | `pure/linalg.hpp` + `pure/m11_matmul.cpp` | **matmul + transpose** (for v11 attention) | match torch ~1e-7 |
 | `pure/net_dyn.hpp` + `pure/m12_dyn.cpp` | **data-driven net** (arch manifest, any size) | n / s / m match ~1e-4 |
+| `pure/onnx.hpp` + `pure/onnx_export.cpp` | **ONNX writer** (hand-rolled protobuf, no deps) | onnxruntime runs it, ~2e-5 |
+| `pure/onnx_run.hpp` + `pure/m13_onnx_run.cpp` | **ONNX reader + graph interpreter** | pure engine runs the `.onnx`, ~2e-5 |
 
 For inference BatchNorm is folded into the preceding conv; for training/round-trip the
 unfused path (`pure/bn.hpp` + `pure/net_unfused.hpp`) keeps conv/BN separate so weights
@@ -91,6 +93,8 @@ python pure/ref/export_unfused.py 64  # unfused conv+BN weights (training / .pt 
 python pure/ref/m6_infer_ref.py 640   # preprocessed image + reference decode/NMS
 python pure/ref/bn_ref.py             # BatchNorm2d reference
 python pure/ref/writeback_pt.py       # after m9: C++ weights -> yolov8n_cpp.pt (Ultralytics-runnable)
+python pure/ref/export_arch.py yolov8m 64   # arch + weights for a size (n/s/m/l/x)
+python pure/ref/onnx_verify.py yolov8n      # after onnx_export: check the .onnx in onnxruntime
 python ref/loss_ref.py                # dump loss/grad reference (LibTorch track)
 ```
 
@@ -101,5 +105,8 @@ forward, **end-to-end training**, **inference (DFL decode + NMS on a real image)
 standard `yolov8n.pt` → runs in Ultralytics) all reproduced and verified against
 Ultralytics — in the pure engine, standard library plus two single-header image libs
 only. Both g++ (OpenMP) and MSVC (std::thread) build and parallelise from one source.
-Remaining: data-driven net for s/m/l/x, ONNX import, optimizers (Adam), and an optional
-CUDA backend behind the conv seam (see [ROADMAP.md](ROADMAP.md)).
+A **data-driven builder** runs any size (n/s/m/l/x) from an arch manifest, and a
+self-contained **ONNX reader/writer** exports the net to a standard `.onnx`
+(onnxruntime-verified) and runs a `.onnx` graph-driven in the pure engine — no external
+libraries. Remaining: real dataloader + mAP, LR schedule, and an optional CUDA backend
+behind the conv seam (see [ROADMAP.md](ROADMAP.md)).
