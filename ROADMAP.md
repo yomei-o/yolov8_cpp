@@ -62,8 +62,15 @@
   残り: LR スケジュール (cosine/warmup) と学習ループへの本格組み込み。
 - ✅ **C-3. matmul op** — 実装済み (`pure/linalg.hpp`: matmul + transpose2d, `pure/m11_matmul.cpp`)。
   forward/backward を torch と一致 (~1e-7) で検証。v11 の C2PSA (attention, 下記 D-1) の土台。
-- **C-4. CUDA バックエンド**: conv 等を `#ifdef USE_CUDA` 境界の裏に隠して差し込む
-  (CPU/OpenMP はフラグ切替で維持)。
+- **C-4. CUDA バックエンド**: ✅ **シム土台 実装済み** (`pure/backend.hpp`, `pure/m17_gpu.cpp`)。
+  単一ヘッダで `bk::Buffer<T>` (device メモリ) + `bk::parallel_for(n, [=] BK_HD (i){...})` +
+  `bk::gemm` を提供。**同一ソースが nvcc(-DUSE_CUDA) で実 CUDA、g++/MSVC で CPU** にコンパイル
+  (CPU パスが GPU 無し時の「エミュ」)。CPU で vecadd/gemm を検証 (diff 0)。
+  ビルド: `nvcc -x cu -std=c++17 --extended-lambda -DUSE_CUDA -O2 pure/m17_gpu.cpp`。
+  - 残り (要 GPU 実機/クラウド): (1) 実 GPU で m17 実行確認、(2) conv の im2col+GEMM と
+    elementwise を `bk::` 経由に差し替え (Tensor データを `bk::Buffer` に載せる)、(3) 学習
+    ループを device 常駐化 (毎 iter の H2D/D2H を避ける)。GPU が無いこのマシンでは CPU パスの
+    正しさと CUDA パスのコンパイル整合まで。実行/性能は Colab 等の GPU で。
 - **C-5. 速度**: ✅ **im2col + GEMM 化 実装済み** (`pure/autograd.hpp` conv2d)。順・逆とも
   パッチを (K,P) 行列に集約し、連続メモリの内ループを自動ベクトル化＋ `parallel_for` で
   並列化。順伝播 640 が 11.9s → 2.2s (約5.4x)、学習 iter(160) が 0.99s → 0.32s (約3x)。
