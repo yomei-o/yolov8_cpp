@@ -103,8 +103,20 @@ the `.bin` export. So a fresh clone bootstraps and trains with **zero Python**:
 `make_init_pt` → `init.pt` → `train_cli`. Regenerate the synthetic set with
 `python pure/ref/make_synth.py 96 24` (the one Python touch, only to fabricate demo images).
 
-**Remaining work** (real-dataset convergence parity, richer augmentation, `data.yaml`/unified
-CLI, EMA/resume, speed) is tracked in **[RESUME.md](RESUME.md)**.
+**Unified CLI + `data.yaml`.** `pure/yolo.cpp` is a single `yolo` command that reads a
+standard Ultralytics `data.yaml` (`path`/`train`/`val`/`nc`/`names`):
+```sh
+cl /std:c++20 /O2 /EHsc /Ipure\third_party pure\yolo.cpp        # or g++ ...
+./yolo train  --data data.yaml --weights init.pt --imgsz 640 --epochs 100 --batch 16 \
+              --mosaic 1 --mixup 1 --close-mosaic 10            # HSV/affine/flip on by default
+./yolo val    --data data.yaml --weights best.pt --imgsz 640   # -> mAP@0.5 and mAP@0.5:0.95
+./yolo detect --weights best.pt --source img.jpg --out out.png --data data.yaml
+```
+Augmentation (mosaic, mixup, random-affine, HSV, flip, close-mosaic) lives in `pure/dataset.hpp`
+(`AugCfg`). `yolo export` currently points at the standalone `onnx_export`.
+
+**Remaining work** (real-dataset convergence parity, custom `nc`, in-CLI export, EMA/resume,
+speed, Apple-Silicon BLAS) is tracked in **[RESUME.md](RESUME.md)**.
 
 ## Two tracks
 
