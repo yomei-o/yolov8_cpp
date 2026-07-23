@@ -9,12 +9,7 @@ inline Tensor matmul(const Tensor& A, const Tensor& B) {
   int64_t M = A->shape[0], K = A->shape[1], N = B->shape[1];
   assert(B->shape[0] == K);
   auto o = make_tensor({M, N}, true);
-  const float* a = A->data.data(); const float* b = B->data.data(); float* c = o->data.data();
-  for (int64_t m = 0; m < M; ++m)
-    for (int64_t k = 0; k < K; ++k) {
-      float av = a[m * K + k]; const float* brow = &b[k * N]; float* crow = &c[m * N];
-      for (int64_t n = 0; n < N; ++n) crow[n] += av * brow[n];
-    }
+  bk::gemm_hosted(A->data.data(), B->data.data(), o->data.data(), M, K, N);  // device seam
   o->parents = {A, B};
   Node* op = o.get();
   o->backward_fn = [A, B, op, M, K, N] {

@@ -11,6 +11,7 @@
 #include <algorithm>
 #include <unordered_set>
 #include "parallel.hpp"
+#include "backend.hpp"   // bk::gemm_hosted device seam (CUDA / CPU)
 
 struct Node;
 using Tensor = std::shared_ptr<Node>;
@@ -183,17 +184,11 @@ inline Tensor conv2d(const Tensor& in, const Tensor& w, const Tensor& bias,
     thread_local std::vector<float> colf;                 // reused across conv calls
     colf.resize(K * P);
     im2col_(in->data.data() + n * Cin * H * W, Cin, H, W, kh, kw, OH, OW, stride, pad, colf.data());
-    const float* colp = colf.data();
     float* On = O + n * Cout * P;
-    parallel_for(Cout, [&](int64_t co) {
-      float* orow = On + co * P;
-      float b = B ? B[co] : 0.f;
-      for (int64_t p = 0; p < P; ++p) orow[p] = b;
-      const float* wrow = Wd + co * K;
-      for (int64_t k = 0; k < K; ++k) {
-        float wv = wrow[k]; const float* crow = colp + k * P;
-        for (int64_t p = 0; p < P; ++p) orow[p] += wv * crow[p];   // contiguous -> vectorised
-      }
+    bk::gemm_hosted(Wd, colf.data(), On, Cout, K, P);      // On(Cout,P) = W(Cout,K) @ col(K,P)
+    if (B) parallel_for(Cout, [&](int64_t co) {            // add bias per row
+      float b = B[co]; float* orow = On + co * P;
+      for (int64_t p = 0; p < P; ++p) orow[p] += b;
     });
   }
 

@@ -78,16 +78,46 @@ template <class F> inline void parallel_for(int64_t n, F f) {
 inline void sync() {}
 #endif
 
-// C(M,N) = A(M,K) * B(K,N). Pointers are device pointers (host on the CPU path).
-// One thread per output element — same body compiles for CUDA and CPU.
-inline void gemm(const float* A, const float* B, float* C,
-                 int64_t M, int64_t K, int64_t N) {
+// C(M,N) = A(M,K) * B(K,N). Pointers live in the active memory space (device under
+// CUDA, host on CPU).
+#ifdef USE_CUDA
+// One thread per output element.
+inline void gemm(const float* A, const float* B, float* C, int64_t M, int64_t K, int64_t N) {
   parallel_for(M * N, [=] BK_HD (int64_t idx) {
     int64_t m = idx / N, n = idx % N;
     float s = 0.f;
     for (int64_t k = 0; k < K; ++k) s += A[m * K + k] * B[k * N + n];
     C[idx] = s;
   });
+}
+#else
+// One thread per row m; inner loop over the contiguous N so it auto-vectorises.
+inline void gemm(const float* A, const float* B, float* C, int64_t M, int64_t K, int64_t N) {
+  parallel_for(M, [=] (int64_t m) {
+    float* cr = C + m * N;
+    for (int64_t n = 0; n < N; ++n) cr[n] = 0.f;
+    for (int64_t k = 0; k < K; ++k) {
+      float av = A[m * K + k]; const float* br = B + k * N;
+      for (int64_t n = 0; n < N; ++n) cr[n] += av * br[n];
+    }
+  });
+}
+#endif
+
+// Host-facing GEMM: inputs/outputs are host pointers. On CUDA it stages to the
+// device, runs, and copies back (per-call staging for now — device-resident later);
+// on CPU it runs in place with no copies. This is the single place the engine's ops
+// (conv im2col-GEMM, matmul) route through to reach the device.
+inline void gemm_hosted(const float* A, const float* B, float* C,
+                        int64_t M, int64_t K, int64_t N) {
+#ifdef USE_CUDA
+  Buffer<float> dA, dB, dC;
+  dA.from_host(A, M * K); dB.from_host(B, K * N); dC.alloc(M * N);
+  gemm(dA.data(), dB.data(), dC.data(), M, K, N);
+  dC.to_host(C);
+#else
+  gemm(A, B, C, M, K, N);
+#endif
 }
 
 } // namespace bk
