@@ -36,14 +36,17 @@ is the forward-looking TODO.
 6. **CPU speed on Apple Silicon** — the CUDA seam doesn't help on Mac (Metal≠CUDA). Add a
    BLAS path to `bk::gemm_hosted` (Apple Accelerate / OpenBLAS) for a big CPU speedup without
    a GPU; a full Metal backend is a much larger, lower-priority effort.
-7. **Verify the unified `train_cli`/`yolo.cpp` under a CUDA build** — compile with
-   `nvcc -DUSE_CUDA` and run COCO128 end-to-end on a (free-Colab) T4. The CUDA seam
-   (`backend.hpp`) + a training loop were verified on T4, but the new dataset-ingestion +
-   augmentation CLI path hasn't been built/run under nvcc yet (aug/dataset are host-side, so
-   it should work; conv/matmul auto-route to `bk::` on GPU). Est. COCO128/640px/100ep on a
-   T4 ≈ 7–20 min. On CPU it is impractical: measured ~5.7 s/image fwd+bwd at 640px
-   (~4.6 GFLOP/s effective, naive GEMM) => COCO128/640px/100ep ≈ ~a day (20–30 h) on
-   M2-class CPU. Smaller imgsz (320 ≈ 4× faster) or a BLAS backend (#6) helps; GPU is the fix.
+7. **[DONE] Unified `yolo.cpp` verified under a CUDA build on free-Colab T4** (2026-07-23):
+   `nvcc -x cu -std=c++17 --extended-lambda -DUSE_CUDA` builds clean; COCO128 runs end-to-end.
+   Pretrained `init.pt` vals 0.59 mAP@0.5 / 0.44 @0.5:0.95 (matches yolov8n) — inference+mAP
+   correct on real data. Fine-tune (`--lr 2e-4`) no longer collapses; close-mosaic recovery
+   0.45→0.52 over 3 epochs. See `colab/coco128_train.ipynb`.
+8. **[TOP SPEED PRIORITY] Device-resident buffers + cuBLAS** — measured ~4.6 min/epoch on T4
+   (COCO128/640/batch4) => ~8 h for 100 epochs, only ~3× CPU. The `bk::gemm_hosted` backend
+   copies host↔device per op and uses a naive kernel, capping GPU use far below a T4's
+   potential (Ultralytics does COCO128 in seconds/epoch). Keep activations device-resident
+   across ops and route GEMM through cuBLAS. (On CPU, 640px is ~a day for 100ep — measured
+   ~5.7 s/image fwd+bwd; smaller imgsz or the Apple-Silicon BLAS path (#6) helps.)
 
 ## Notes / gotchas
 - Label coords: internally everything is xyxy in the **letterboxed SxS pixel** space; GT and
