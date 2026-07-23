@@ -37,6 +37,7 @@ static void decode_for_tal(const Tensor& pd, const Tensor& ps, const std::vector
 }
 
 int main(int argc, char** argv) {
+  setvbuf(stdout, nullptr, _IONBF, 0);   // unbuffered so redirected/background runs show per-epoch progress
   std::string trainL = argc>1?argv[1]:"pure/ref/data_synth/list.txt";
   std::string valL   = argc>2?argv[2]:"pure/ref/data_synth/val.txt";
   int EPOCHS = argc>3?atoi(argv[3]):8, BATCH = argc>4?atoi(argv[4]):4;
