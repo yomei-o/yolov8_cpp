@@ -47,7 +47,9 @@ int main(int argc, char** argv) {
   int64_t S = tr.S;
   printf("train=%zu val=%zu imgsz=%lld batch=%d epochs=%d\n", tr.items.size(), va.items.size(), (long long)S, BATCH, EPOCHS);
 
-  auto prov = load_net_unfused(DN);
+  // initial weights: from the init .pt (pure-C++ read, arch from the tiny manifest) if it
+  // exists, else from the Python-exported .bin files.
+  ProviderU prov; { std::ifstream t(initpt); if (t.good()) { printf("init weights <- %s (pure C++)\n", initpt.c_str()); prov = load_net_unfused_pt(DN, initpt); } else prov = load_net_unfused(DN); }
   std::vector<int64_t> dep; { std::ifstream f(DN + "depths.txt"); int64_t v; while (f >> v) dep.push_back(v); }
   std::vector<Tensor> params; for (auto& L : prov.layers) { params.push_back(L.w); if (L.kind==1){params.push_back(L.gamma);params.push_back(L.beta);} else params.push_back(L.b); }
   Adam opt(params, 2e-3f, 0.9f, 0.999f, 1e-8f, 5e-4f, false);
