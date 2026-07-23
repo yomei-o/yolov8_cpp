@@ -80,6 +80,17 @@ two tiny text files that ship in the repo — `pure/ref/data_net/manifest_unfuse
   the practical **transfer-learning** init; the only input is the `.pt` file itself (just
   download it — no Python). Verified to reproduce the fine-tune run exactly (mAP 0.796).
 
+**Standard datasets + mosaic.** `train_cli` also reads a **standard Ultralytics/YOLO
+dataset** — pass an images directory (or a list file) plus an `imgsz`, and it scans
+`images/`↔`labels/`, reads normalised `cls xc yc w h` labels, and letterboxes arbitrary-size
+images. A 7th arg toggles **mosaic** augmentation (on by default in this mode; flip +
+brightness always on):
+```sh
+python pure/ref/make_synth_yolo.py 40      # tiny dataset in the standard images/ + labels/ layout
+./train_cli pure/ref/data_yolo/images/train pure/ref/data_yolo/images/val 6 4 init.pt 128 1
+#   fmt=yolo mosaic=1 ... (mosaic=0 -> val mAP@0.5 0.967 on the synthetic set)
+```
+
 **All sizes.** The generator is size-agnostic — it just reads the arch files. Every size's
 `manifest_unfused.txt` + `names.txt` ship under `pure/ref/arch/<model>/` (n/s/m/l/x), so
 `./make_init_pt out.pt rand yolov8n.pt pure/ref/arch/yolov8m/` builds an init `.pt` for any
@@ -91,6 +102,9 @@ arch from the manifest, tensors looked up by `names.txt` key) when it's present,
 the `.bin` export. So a fresh clone bootstraps and trains with **zero Python**:
 `make_init_pt` → `init.pt` → `train_cli`. Regenerate the synthetic set with
 `python pure/ref/make_synth.py 96 24` (the one Python touch, only to fabricate demo images).
+
+**Remaining work** (real-dataset convergence parity, richer augmentation, `data.yaml`/unified
+CLI, EMA/resume, speed) is tracked in **[RESUME.md](RESUME.md)**.
 
 ## Two tracks
 

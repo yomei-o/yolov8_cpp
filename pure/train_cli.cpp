@@ -41,11 +41,16 @@ int main(int argc, char** argv) {
   std::string valL   = argc>2?argv[2]:"pure/ref/data_synth/val.txt";
   int EPOCHS = argc>3?atoi(argv[3]):8, BATCH = argc>4?atoi(argv[4]):4;
   std::string initpt = argc>5?argv[5]:"yolov8n.pt";
+  int imgsz = argc>6?atoi(argv[6]):0;                 // >0 => standard-YOLO dataset (dir/list + normalised labels)
+  bool mosaic = argc>7?atoi(argv[7])!=0:(imgsz>0);    // mosaic on by default in YOLO mode
   const std::string DN = "pure/ref/data_net/";
 
-  Dataset tr = read_dataset(trainL), va = read_dataset(valL);
+  Dataset tr, va;
+  if (imgsz>0) { tr = read_yolo_dataset(trainL, imgsz); va = read_yolo_dataset(valL, imgsz); }
+  else { tr = read_dataset(trainL); va = read_dataset(valL); }
   int64_t S = tr.S;
-  printf("train=%zu val=%zu imgsz=%lld batch=%d epochs=%d\n", tr.items.size(), va.items.size(), (long long)S, BATCH, EPOCHS);
+  printf("train=%zu val=%zu imgsz=%lld batch=%d epochs=%d fmt=%s mosaic=%d\n",
+         tr.items.size(), va.items.size(), (long long)S, BATCH, EPOCHS, tr.yolo?"yolo":"legacy", (int)mosaic);
 
   // initial weights: from the init .pt (pure-C++ read, arch from the tiny manifest) if it
   // exists, else from the Python-exported .bin files.
@@ -76,16 +81,15 @@ int main(int argc, char** argv) {
   auto validate = [&]() -> double {
     std::vector<mapeval::Image> imgs;
     for (auto& s : va.items) {
-      Dataset one; one.S=S; one.items={s};
-      Batch b = load_minibatch(one, {0}, false, 0);
-      prov.i=0; auto h = yolov8n_forward_u(b.x, prov, false, dep);
+      Letterbox lb; auto xi = load_image_letterbox(s.img, S, lb);   // no aug/mosaic at eval
+      prov.i=0; auto h = yolov8n_forward_u(xi, prov, false, dep);
       std::vector<Tensor> bx={h[0].first,h[1].first,h[2].first}, cs={h[0].second,h[1].second,h[2].second};
       auto pd=pack_levels(bx,1,A,4*RM); auto ps=pack_levels(cs,1,A,NC);
       std::vector<float> pred; decode_predictions(pd->data, ps->data, axv,ayv,sv, A, NC, RM, pred);
       auto dets = nms(pred, A, NC, 0.25f, 0.5f, 100);
       mapeval::Image im;
       for (auto& d : dets) im.dts.push_back({d.x1,d.y1,d.x2,d.y2,d.cls,d.conf});
-      std::vector<float> gb; std::vector<int64_t> gl; int m = load_labels(s.lbl, gb, gl);
+      std::vector<float> gb; std::vector<int64_t> gl; int m = load_boxes_orig(s.lbl, va.yolo, lb.w0, lb.h0, gb, gl); lb_map(gb, lb);
       for (int j=0;j<m;++j) im.gts.push_back({gb[j*4],gb[j*4+1],gb[j*4+2],gb[j*4+3],(int)gl[j]});
       imgs.push_back(im);
     }
@@ -100,7 +104,7 @@ int main(int argc, char** argv) {
     std::shuffle(order.begin(), order.end(), rng); double eloss = 0; int nb = 0;
     for (size_t off = 0; off < order.size(); off += BATCH) {
       std::vector<int> idx(order.begin()+off, order.begin()+std::min(order.size(), off+BATCH));
-      Batch bt = load_minibatch(tr, idx, true, rng());
+      Batch bt = load_minibatch(tr, idx, true, rng(), mosaic);
       int64_t B = bt.B, R = B*A, Mx = bt.M;
       std::vector<float> ancx(R),ancy(R),strd(R); for (int64_t r=0;r<R;++r){int64_t a=r%A;ancx[r]=ax[a];ancy[r]=ay[a];strd[r]=ss[a];}
       prov.i=0; auto h = yolov8n_forward_u(bt.x, prov, true, dep);
