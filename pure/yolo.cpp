@@ -127,17 +127,20 @@ static int cmd_train(const Args& a) {
   AugCfg baseAug; baseAug.mosaic = a.geti("mosaic", 1) != 0; baseAug.mixup = a.geti("mixup", 1) != 0;
   baseAug.hsv = a.geti("hsv", 1) != 0; baseAug.affine = a.geti("affine", 1) != 0; baseAug.flip = a.geti("flip", 1) != 0;
   int closeMosaic = a.geti("close-mosaic", std::max(1, EPOCHS/10));
+  float lr0 = a.getf("lr", 1e-3f);                    // fine-tune default; 2e-3 destroys pretrained
   if (dy.nc != NC0) printf("[warn] data.yaml nc=%d but the head is %lld-class; class ids must be < %lld "
                            "(custom-nc head re-init is a RESUME item)\n", dy.nc, (long long)NC0, (long long)NC0);
 
   Dataset tr = read_yolo_dataset(join(dy.path, dy.train), S);
   Dataset va = read_yolo_dataset(join(dy.path, dy.val),   S);
-  printf("train=%zu val=%zu imgsz=%lld batch=%d epochs=%d mosaic=%d mixup=%d close-mosaic=%d\n",
-         tr.items.size(), va.items.size(), (long long)S, BATCH, EPOCHS, (int)baseAug.mosaic, (int)baseAug.mixup, closeMosaic);
+  int spe = ((int)tr.items.size()+BATCH-1)/BATCH;
+  int warmup = a.geti("warmup", std::max(1, spe));   // ~1 epoch warmup (ramp lr from 0)
+  printf("train=%zu val=%zu imgsz=%lld batch=%d epochs=%d lr=%.1e warmup=%d mosaic=%d mixup=%d close-mosaic=%d\n",
+         tr.items.size(), va.items.size(), (long long)S, BATCH, EPOCHS, lr0, warmup, (int)baseAug.mosaic, (int)baseAug.mixup, closeMosaic);
 
   std::vector<int64_t> dep; auto prov = load_model(weights, dep);
   std::vector<Tensor> params; for (auto& L : prov.layers) { params.push_back(L.w); if (L.kind==1){params.push_back(L.gamma);params.push_back(L.beta);} else params.push_back(L.b); }
-  Adam opt(params, 2e-3f, 0.9f, 0.999f, 1e-8f, 5e-4f, false);
+  Adam opt(params, lr0, 0.9f, 0.999f, 1e-8f, 5e-4f, false);
 
   struct Lv { int64_t h,w; float s; }; std::vector<Lv> lv = {{S/8,S/8,8.f},{S/16,S/16,16.f},{S/32,S/32,32.f}};
   std::vector<float> ax,ay,ss,anc_img; for (auto& L:lv) for (int64_t y=0;y<L.h;++y) for (int64_t x=0;x<L.w;++x){ax.push_back(x+.5f);ay.push_back(y+.5f);ss.push_back(L.s);anc_img.push_back((x+.5f)*L.s);anc_img.push_back((y+.5f)*L.s);}
@@ -174,7 +177,7 @@ static int cmd_train(const Args& a) {
       auto tal = tal_assign(pss,pdb,anc_img, bt.gt_labels, bt.gt_boxes, bt.mask, B,A,Mx,NC0,10,0.5f,6.0f);
       auto Lo = pure_v8_loss(pd,ps,ancx,ancy,strd,tal.tb,tal.ts,R,NC0,RM);
       backward(Lo.total);
-      opt.lr = cosine_lr(gstep, total, 2e-3f, std::max(1,total/20)); opt.step(); ++gstep;
+      opt.lr = cosine_lr(gstep, total, lr0, warmup); opt.step(); ++gstep;
       eloss += Lo.total->data[0]; ++nb;
     }
     Dataset vac = va; double m50 = run_val(vac, prov, dep, S);
