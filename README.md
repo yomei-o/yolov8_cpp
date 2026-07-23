@@ -43,6 +43,49 @@ assets/bus.jpg  810x1080         assets/zidane.jpg  1280x720
 These match Ultralytics' own yolov8n output (boxes to ~8e-5 on the letterboxed input,
 same classes — see `pure/m6_infer.cpp`). The decode + NMS are in `pure/infer.hpp`.
 
+## Train with zero Python — the full loop in C++
+
+`pure/train_cli.cpp` is a real training environment, pure C++, **no Python at run time**:
+dataset scan → shuffled mini-batches (hflip + brightness augmentation) over epochs →
+TaskAlignedAssigner → v8 loss → Adam (warmup + cosine LR + weight decay) → **per-epoch
+validation mAP@0.5** → save `best.pt` / `last.pt` via the pure-C++ `.pt` writer.
+
+```sh
+cl /std:c++20 /O2 /EHsc /Ipure\third_party pure\make_init_pt.cpp   # or g++ ...
+cl /std:c++20 /O2 /EHsc /Ipure\third_party pure\train_cli.cpp
+
+./make_init_pt init.pt from yolov8n.pt      # C++ builds the initial-weights .pt (see below)
+./train_cli pure/ref/data_synth/list.txt pure/ref/data_synth/val.txt 6 4 init.pt
+#   epoch 1/6  loss 5.66  val mAP@0.5 0.270
+#   epoch 6/6  loss 2.33  val mAP@0.5 0.796   -> best.pt / last.pt (pure C++)
+```
+
+The C++-trained `best.pt` loads straight back into Ultralytics
+(`model.load_state_dict(torch.load('best.pt'))`, 0 unexpected keys) and detects the
+right classes — so you can train/retrain in C++ and drop the result into any PyTorch
+pipeline. (Checkpoint keys are paired by **name** via `names.txt`, because the engine's
+C2f emit order differs from PyTorch's `state_dict` order.)
+
+### Make the initial-weights `.pt` in C++ — no Python needed to bootstrap
+
+`pure/make_init_pt.cpp` writes a valid `state_dict` `.pt` entirely in C++, driven only by
+two tiny text files that ship in the repo — `pure/ref/data_net/manifest_unfused.txt`
+(per-layer shapes) and `names.txt` (state_dict keys). No Python, no libtorch:
+
+- **`rand`** — He/Kaiming random init, fully self-contained (needs neither a pretrained
+  file nor Python). Loads in Ultralytics (0 unexpected). Trains mechanically, but
+  from-scratch convergence needs real data volume + many epochs.
+- **`from <pretrained.pt>`** — copies pretrained values read in C++ by `ptio`
+  (`load_pt` for a state_dict, `load_pt_module` for a raw Ultralytics checkpoint). This is
+  the practical **transfer-learning** init; the only input is the `.pt` file itself (just
+  download it — no Python). Verified to reproduce the fine-tune run exactly (mAP 0.796).
+
+`train_cli` starts from that init `.pt` (`load_net_unfused_pt` in `pure/net_unfused.hpp`,
+arch from the manifest, tensors looked up by `names.txt` key) when it's present, else from
+the `.bin` export. So a fresh clone bootstraps and trains with **zero Python**:
+`make_init_pt` → `init.pt` → `train_cli`. Regenerate the synthetic set with
+`python pure/ref/make_synth.py 96 24` (the one Python touch, only to fabricate demo images).
+
 ## Two tracks
 
 ### 1. LibTorch track — port the v8 loss, then train the real yolov8n
