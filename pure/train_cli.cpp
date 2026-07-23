@@ -97,15 +97,18 @@ int main(int argc, char** argv) {
     return mapeval::coco_map(imgs).first;   // mAP@0.50
   };
 
+  AugCfg baseAug; baseAug.mosaic = mosaic; baseAug.mixup = mosaic;     // HSV/affine/flip on by default
+  int closeMosaic = argc>8 ? atoi(argv[8]) : std::max(1, EPOCHS/10);   // disable mosaic/mixup for last N epochs
   std::vector<int> order(tr.items.size()); std::iota(order.begin(), order.end(), 0);
   std::mt19937 rng(0);
   int steps_per_epoch = ((int)tr.items.size() + BATCH - 1) / BATCH, total = EPOCHS * steps_per_epoch, gstep = 0;
   double best = -1;
   for (int ep = 0; ep < EPOCHS; ++ep) {
+    AugCfg aug = baseAug; if (ep >= EPOCHS - closeMosaic) { aug.mosaic = false; aug.mixup = false; }
     std::shuffle(order.begin(), order.end(), rng); double eloss = 0; int nb = 0;
     for (size_t off = 0; off < order.size(); off += BATCH) {
       std::vector<int> idx(order.begin()+off, order.begin()+std::min(order.size(), off+BATCH));
-      Batch bt = load_minibatch(tr, idx, true, rng(), mosaic);
+      Batch bt = load_minibatch(tr, idx, true, rng(), aug);
       int64_t B = bt.B, R = B*A, Mx = bt.M;
       std::vector<float> ancx(R),ancy(R),strd(R); for (int64_t r=0;r<R;++r){int64_t a=r%A;ancx[r]=ax[a];ancy[r]=ay[a];strd[r]=ss[a];}
       prov.i=0; auto h = yolov8n_forward_u(bt.x, prov, true, dep);
