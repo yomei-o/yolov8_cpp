@@ -3,6 +3,7 @@
 // bridge can drop them into yolov8n.pt. Also dumps an eval-mode forward on a fixed
 // input so the round-trip can be checked: Ultralytics loading the new .pt must
 // reproduce these boxes/scores. forward(train) -> TAL -> v8 loss -> backward -> SGD.
+#include <fstream>
 #include "net_unfused.hpp"
 #include "v8pure.hpp"
 #include "tal.hpp"
@@ -15,6 +16,7 @@ int main(int argc, char** argv) {
   const std::string D = "pure/ref/data_net/", D2 = "pure/ref/data_wb/";
   std::filesystem::create_directories(D2);
   auto prov = load_net_unfused(D);
+  std::vector<int64_t> dep; { std::ifstream f(D + "depths.txt"); int64_t v; while (f >> v) dep.push_back(v); }
 
   // trainable params: conv weights + BN affine (or plain conv bias)
   std::vector<Tensor> params;
@@ -48,7 +50,7 @@ int main(int argc, char** argv) {
   printf("iter |   total     box      cls      dfl\n");
   for (int it = 0; it < ITERS; ++it) {
     prov.i = 0;
-    auto lvs = yolov8n_forward_u(img, prov, /*training=*/true);
+    auto lvs = yolov8n_forward_u(img, prov, true, dep);
     std::vector<Tensor> boxes = {lvs[0].first, lvs[1].first, lvs[2].first};
     std::vector<Tensor> clses = {lvs[0].second, lvs[1].second, lvs[2].second};
     auto pred_distri = pack_levels(boxes, B, A, 4 * RM);
@@ -91,7 +93,7 @@ int main(int argc, char** argv) {
   // eval-mode forward on a fixed input -> the round-trip target for Ultralytics
   auto x = from_data({1, 3, IMG, IMG}, rd(D + "x.bin"));
   prov.i = 0;
-  auto lv = yolov8n_forward_u(x, prov, /*training=*/false);
+  auto lv = yolov8n_forward_u(x, prov, false, dep);
   int64_t Atot = 0; for (auto& p : lv) Atot += p.first->shape[2] * p.first->shape[3];
   int64_t NB = lv[0].first->shape[1], NS = lv[0].second->shape[1];
   std::vector<float> bx(NB*Atot), sc(NS*Atot);

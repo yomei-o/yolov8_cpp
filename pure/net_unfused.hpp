@@ -71,25 +71,25 @@ inline std::pair<Tensor, Tensor> detect_level_u(const Tensor& x, ProviderU& p, b
   return {box, cls};
 }
 
-inline std::vector<std::pair<Tensor, Tensor>> yolov8n_forward_u(const Tensor& x, ProviderU& p, bool tr) {
+inline std::vector<std::pair<Tensor, Tensor>> yolov8n_forward_u(const Tensor& x, ProviderU& p, bool tr, const std::vector<int64_t>& d = {1,2,2,1,1,1,1,1}) {
   auto x0 = cLU(x, p, tr);
   auto x1 = cLU(x0, p, tr);
-  auto x2 = c2f_u(x1, p, 1, true, tr);
+  auto x2 = c2f_u(x1, p, d[0], true, tr);
   auto x3 = cLU(x2, p, tr);
-  auto x4 = c2f_u(x3, p, 2, true, tr);
+  auto x4 = c2f_u(x3, p, d[1], true, tr);
   auto x5 = cLU(x4, p, tr);
-  auto x6 = c2f_u(x5, p, 2, true, tr);
+  auto x6 = c2f_u(x5, p, d[2], true, tr);
   auto x7 = cLU(x6, p, tr);
-  auto x8 = c2f_u(x7, p, 1, true, tr);
+  auto x8 = c2f_u(x7, p, d[3], true, tr);
   auto x9 = sppf_u(x8, p, tr);
   auto u10 = upsample_nearest(x9, 2);
-  auto x12 = c2f_u(concat_ch({u10, x6}), p, 1, false, tr);
+  auto x12 = c2f_u(concat_ch({u10, x6}), p, d[4], false, tr);
   auto u13 = upsample_nearest(x12, 2);
-  auto x15 = c2f_u(concat_ch({u13, x4}), p, 1, false, tr);
+  auto x15 = c2f_u(concat_ch({u13, x4}), p, d[5], false, tr);
   auto x16 = cLU(x15, p, tr);
-  auto x18 = c2f_u(concat_ch({x16, x12}), p, 1, false, tr);
+  auto x18 = c2f_u(concat_ch({x16, x12}), p, d[6], false, tr);
   auto x19 = cLU(x18, p, tr);
-  auto x21 = c2f_u(concat_ch({x19, x9}), p, 1, false, tr);
+  auto x21 = c2f_u(concat_ch({x19, x9}), p, d[7], false, tr);
   std::vector<std::pair<Tensor, Tensor>> out;
   for (auto& xi : {x15, x18, x21}) out.push_back(detect_level_u(xi, p, tr));
   return out;

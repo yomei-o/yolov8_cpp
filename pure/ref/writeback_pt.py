@@ -9,7 +9,9 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 DN = os.path.join(HERE, "data_net"); DW = os.path.join(HERE, "data_wb")
 def r(n, d=DW): return np.fromfile(os.path.join(d, n), np.float32)
 
-ym = YOLO("yolov8n.pt")
+import sys
+MODEL = sys.argv[1] if len(sys.argv) > 1 else "yolov8n"
+ym = YOLO(MODEL + ".pt")
 mods = walk(ym.model)
 
 def load_(param, arr):
@@ -38,7 +40,7 @@ for i, m in enumerate(mods):
             serr = max(serr, float(np.abs(arr.reshape(p.shape) - p.detach().numpy()).max()))
 print(f"serialization max|diff| = {serr:.3e}  {'OK' if serr < 1e-6 else 'FAIL'}")
 
-out = "yolov8n_cpp.pt"
+out = MODEL + "_cpp.pt"
 ym.save(out)
 print("saved", out)
 
