@@ -85,21 +85,21 @@ inline void sync() {}
 //   gemm_tn : C(M,N) = A(Kc,M)^T* B(Kc,N)               (TN) — conv dcol = W^T * dO
 #ifdef USE_CUDA
 inline void gemm(const float* A, const float* B, float* C, int64_t M, int64_t K, int64_t N, float beta = 0.f) {
-  parallel_for(M * N, [=] BK_HD (int64_t idx) {
+  bk::parallel_for(M * N, [=] BK_HD (int64_t idx) {
     int64_t m = idx / N, n = idx % N; float s = 0.f;
     for (int64_t k = 0; k < K; ++k) s += A[m * K + k] * B[k * N + n];
     C[idx] = s + (beta == 0.f ? 0.f : beta * C[idx]);
   });
 }
 inline void gemm_nt(const float* A, const float* B, float* C, int64_t M, int64_t N, int64_t Kc, float beta = 0.f) {
-  parallel_for(M * N, [=] BK_HD (int64_t idx) {
+  bk::parallel_for(M * N, [=] BK_HD (int64_t idx) {
     int64_t m = idx / N, n = idx % N; const float* ar = A + m * Kc; const float* br = B + n * Kc;
     float s = 0.f; for (int64_t k = 0; k < Kc; ++k) s += ar[k] * br[k];
     C[idx] = s + (beta == 0.f ? 0.f : beta * C[idx]);
   });
 }
 inline void gemm_tn(const float* A, const float* B, float* C, int64_t M, int64_t N, int64_t Kc, float beta = 0.f) {
-  parallel_for(M * N, [=] BK_HD (int64_t idx) {
+  bk::parallel_for(M * N, [=] BK_HD (int64_t idx) {
     int64_t m = idx / N, n = idx % N; float s = 0.f;
     for (int64_t k = 0; k < Kc; ++k) s += A[k * M + m] * B[k * N + n];
     C[idx] = s + (beta == 0.f ? 0.f : beta * C[idx]);
@@ -107,7 +107,7 @@ inline void gemm_tn(const float* A, const float* B, float* C, int64_t M, int64_t
 }
 #else
 inline void gemm(const float* A, const float* B, float* C, int64_t M, int64_t K, int64_t N, float beta = 0.f) {
-  parallel_for(M, [=] (int64_t m) {
+  bk::parallel_for(M, [=] (int64_t m) {
     float* cr = C + m * N;
     if (beta == 0.f) for (int64_t n = 0; n < N; ++n) cr[n] = 0.f;
     else if (beta != 1.f) for (int64_t n = 0; n < N; ++n) cr[n] *= beta;
@@ -116,7 +116,7 @@ inline void gemm(const float* A, const float* B, float* C, int64_t M, int64_t K,
   });
 }
 inline void gemm_nt(const float* A, const float* B, float* C, int64_t M, int64_t N, int64_t Kc, float beta = 0.f) {
-  parallel_for(M, [=] (int64_t m) {
+  bk::parallel_for(M, [=] (int64_t m) {
     const float* ar = A + m * Kc; float* cr = C + m * N;
     for (int64_t n = 0; n < N; ++n) {
       const float* br = B + n * Kc; float s = 0.f;
@@ -126,7 +126,7 @@ inline void gemm_nt(const float* A, const float* B, float* C, int64_t M, int64_t
   });
 }
 inline void gemm_tn(const float* A, const float* B, float* C, int64_t M, int64_t N, int64_t Kc, float beta = 0.f) {
-  parallel_for(M, [=] (int64_t m) {
+  bk::parallel_for(M, [=] (int64_t m) {
     float* cr = C + m * N;
     if (beta == 0.f) for (int64_t n = 0; n < N; ++n) cr[n] = 0.f;
     else if (beta != 1.f) for (int64_t n = 0; n < N; ++n) cr[n] *= beta;
