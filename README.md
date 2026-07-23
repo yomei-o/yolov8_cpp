@@ -80,6 +80,12 @@ two tiny text files that ship in the repo — `pure/ref/data_net/manifest_unfuse
   the practical **transfer-learning** init; the only input is the `.pt` file itself (just
   download it — no Python). Verified to reproduce the fine-tune run exactly (mAP 0.796).
 
+**All sizes.** The generator is size-agnostic — it just reads the arch files. Every size's
+`manifest_unfused.txt` + `names.txt` ship under `pure/ref/arch/<model>/` (n/s/m/l/x), so
+`./make_init_pt out.pt rand yolov8n.pt pure/ref/arch/yolov8m/` builds an init `.pt` for any
+size with zero Python. Each verified to load into its architecture (0 unexpected keys).
+Regenerate them with `python pure/ref/export_arch_all.py` (built from `.yaml`, no download).
+
 `train_cli` starts from that init `.pt` (`load_net_unfused_pt` in `pure/net_unfused.hpp`,
 arch from the manifest, tensors looked up by `names.txt` key) when it's present, else from
 the `.bin` export. So a fresh clone bootstraps and trains with **zero Python**:

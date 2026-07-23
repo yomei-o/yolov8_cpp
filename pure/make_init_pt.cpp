@@ -5,9 +5,11 @@
 // state_dict .pt via the pure-C++ writer. The result loads in Ultralytics (load_state_dict)
 // and is trainable by train_cli.
 //   build: cl /std:c++20 /O2 /EHsc pure/make_init_pt.cpp
-//   run:   make_init_pt [out.pt] [rand|from] [pretrained.pt]
+//   run:   make_init_pt [out.pt] [rand|from] [pretrained.pt] [arch_dir]
 //     rand  (default): He/Kaiming random init from the manifest — fully self-contained.
 //     from  : copy values from a pretrained .pt (read in C++ by ptio) — transfer-learning init.
+//     arch_dir: where manifest_unfused.txt + names.txt live. Defaults to pure/ref/data_net/;
+//               pass pure/ref/arch/yolov8s/ (etc.) to generate weights for another SIZE.
 #include "ptio.hpp"
 #include <cstdio>
 #include <fstream>
@@ -22,7 +24,7 @@ int main(int argc, char** argv) {
   std::string out  = argc > 1 ? argv[1] : "init.pt";
   std::string mode = argc > 2 ? argv[2] : "rand";
   std::string pre  = argc > 3 ? argv[3] : "yolov8n.pt";
-  const std::string DN = "pure/ref/data_net/";
+  const std::string DN = argc > 4 ? argv[4] : "pure/ref/data_net/";
 
   // architecture: one manifest line per layer, "kind Co Ci k s eps"; names.txt lists the
   // state_dict key for each emitted tensor, in the same (engine) order.
