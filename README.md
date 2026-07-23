@@ -107,6 +107,14 @@ Inference on a real image — weights ship in `weights/yolov8n/`, so no Python n
 (see the Demo section above). To (re)generate weights from `yolov8n.pt` yourself:
 `python pure/ref/export_net.py` writes `pure/ref/data_net/{manifest.txt,weights.bin}`.
 
+CUDA (real GPU) — the `bk::` seam in `pure/backend.hpp` compiles the same source to
+CUDA; conv/matmul (fwd+bwd) then run on the GPU, so training runs on the GPU too:
+```sh
+nvcc -x cu -std=c++17 --extended-lambda -DUSE_CUDA -O2 pure/m17_gpu.cpp -o m17 && ./m17
+```
+No GPU handy? Open the ready-made check in Colab (Runtime → GPU → Run all):
+**https://colab.research.google.com/github/yomei-o/yolov8_cpp/blob/main/colab/gpu_check.ipynb**
+
 LibTorch track (CMake + LibTorch 2.13 CPU, C++20):
 ```sh
 cmake -B build -S . -A x64
