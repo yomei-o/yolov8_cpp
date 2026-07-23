@@ -78,46 +78,86 @@ template <class F> inline void parallel_for(int64_t n, F f) {
 inline void sync() {}
 #endif
 
-// C(M,N) = A(M,K) * B(K,N). Pointers live in the active memory space (device under
-// CUDA, host on CPU).
+// GEMM family, all computing  C = op(A) * op(B) + beta*C  (beta=0 overwrites).
+// Pointers live in the active memory space (device under CUDA, host on CPU).
+//   gemm    : C(M,N) = A(M,K)   * B(K,N)                 (NN)
+//   gemm_nt : C(M,N) = A(M,Kc)  * B(N,Kc)^T              (NT) — conv dW = dO * col^T
+//   gemm_tn : C(M,N) = A(Kc,M)^T* B(Kc,N)               (TN) — conv dcol = W^T * dO
 #ifdef USE_CUDA
-// One thread per output element.
-inline void gemm(const float* A, const float* B, float* C, int64_t M, int64_t K, int64_t N) {
+inline void gemm(const float* A, const float* B, float* C, int64_t M, int64_t K, int64_t N, float beta = 0.f) {
   parallel_for(M * N, [=] BK_HD (int64_t idx) {
-    int64_t m = idx / N, n = idx % N;
-    float s = 0.f;
+    int64_t m = idx / N, n = idx % N; float s = 0.f;
     for (int64_t k = 0; k < K; ++k) s += A[m * K + k] * B[k * N + n];
-    C[idx] = s;
+    C[idx] = s + (beta == 0.f ? 0.f : beta * C[idx]);
+  });
+}
+inline void gemm_nt(const float* A, const float* B, float* C, int64_t M, int64_t N, int64_t Kc, float beta = 0.f) {
+  parallel_for(M * N, [=] BK_HD (int64_t idx) {
+    int64_t m = idx / N, n = idx % N; const float* ar = A + m * Kc; const float* br = B + n * Kc;
+    float s = 0.f; for (int64_t k = 0; k < Kc; ++k) s += ar[k] * br[k];
+    C[idx] = s + (beta == 0.f ? 0.f : beta * C[idx]);
+  });
+}
+inline void gemm_tn(const float* A, const float* B, float* C, int64_t M, int64_t N, int64_t Kc, float beta = 0.f) {
+  parallel_for(M * N, [=] BK_HD (int64_t idx) {
+    int64_t m = idx / N, n = idx % N; float s = 0.f;
+    for (int64_t k = 0; k < Kc; ++k) s += A[k * M + m] * B[k * N + n];
+    C[idx] = s + (beta == 0.f ? 0.f : beta * C[idx]);
   });
 }
 #else
-// One thread per row m; inner loop over the contiguous N so it auto-vectorises.
-inline void gemm(const float* A, const float* B, float* C, int64_t M, int64_t K, int64_t N) {
+inline void gemm(const float* A, const float* B, float* C, int64_t M, int64_t K, int64_t N, float beta = 0.f) {
   parallel_for(M, [=] (int64_t m) {
     float* cr = C + m * N;
-    for (int64_t n = 0; n < N; ++n) cr[n] = 0.f;
-    for (int64_t k = 0; k < K; ++k) {
-      float av = A[m * K + k]; const float* br = B + k * N;
-      for (int64_t n = 0; n < N; ++n) cr[n] += av * br[n];
+    if (beta == 0.f) for (int64_t n = 0; n < N; ++n) cr[n] = 0.f;
+    else if (beta != 1.f) for (int64_t n = 0; n < N; ++n) cr[n] *= beta;
+    for (int64_t k = 0; k < K; ++k) { float av = A[m * K + k]; const float* br = B + k * N;
+      for (int64_t n = 0; n < N; ++n) cr[n] += av * br[n]; }
+  });
+}
+inline void gemm_nt(const float* A, const float* B, float* C, int64_t M, int64_t N, int64_t Kc, float beta = 0.f) {
+  parallel_for(M, [=] (int64_t m) {
+    const float* ar = A + m * Kc; float* cr = C + m * N;
+    for (int64_t n = 0; n < N; ++n) {
+      const float* br = B + n * Kc; float s = 0.f;
+      for (int64_t k = 0; k < Kc; ++k) s += ar[k] * br[k];
+      cr[n] = s + (beta == 0.f ? 0.f : beta * cr[n]);
     }
+  });
+}
+inline void gemm_tn(const float* A, const float* B, float* C, int64_t M, int64_t N, int64_t Kc, float beta = 0.f) {
+  parallel_for(M, [=] (int64_t m) {
+    float* cr = C + m * N;
+    if (beta == 0.f) for (int64_t n = 0; n < N; ++n) cr[n] = 0.f;
+    else if (beta != 1.f) for (int64_t n = 0; n < N; ++n) cr[n] *= beta;
+    for (int64_t k = 0; k < Kc; ++k) { float av = A[k * M + m]; const float* br = B + k * N;
+      for (int64_t n = 0; n < N; ++n) cr[n] += av * br[n]; }
   });
 }
 #endif
 
-// Host-facing GEMM: inputs/outputs are host pointers. On CUDA it stages to the
-// device, runs, and copies back (per-call staging for now — device-resident later);
-// on CPU it runs in place with no copies. This is the single place the engine's ops
-// (conv im2col-GEMM, matmul) route through to reach the device.
-inline void gemm_hosted(const float* A, const float* B, float* C,
-                        int64_t M, int64_t K, int64_t N) {
+// Host-facing wrappers: host pointers in/out. On CUDA they stage to the device
+// (staging C in too when beta!=0), run, and copy back; on CPU they run in place.
+// This is the single place the engine's ops route through to reach the device.
 #ifdef USE_CUDA
-  Buffer<float> dA, dB, dC;
-  dA.from_host(A, M * K); dB.from_host(B, K * N); dC.alloc(M * N);
-  gemm(dA.data(), dB.data(), dC.data(), M, K, N);
-  dC.to_host(C);
-#else
-  gemm(A, B, C, M, K, N);
-#endif
+  #define BK_STAGE_C(C, n) if (beta != 0.f) dC.from_host((C), (n)); else dC.alloc((n))
+inline void gemm_hosted(const float* A, const float* B, float* C, int64_t M, int64_t K, int64_t N, float beta = 0.f) {
+  Buffer<float> dA, dB, dC; dA.from_host(A, M*K); dB.from_host(B, K*N); BK_STAGE_C(C, M*N);
+  gemm(dA.data(), dB.data(), dC.data(), M, K, N, beta); dC.to_host(C);
 }
+inline void gemm_nt_hosted(const float* A, const float* B, float* C, int64_t M, int64_t N, int64_t Kc, float beta = 0.f) {
+  Buffer<float> dA, dB, dC; dA.from_host(A, M*Kc); dB.from_host(B, N*Kc); BK_STAGE_C(C, M*N);
+  gemm_nt(dA.data(), dB.data(), dC.data(), M, N, Kc, beta); dC.to_host(C);
+}
+inline void gemm_tn_hosted(const float* A, const float* B, float* C, int64_t M, int64_t N, int64_t Kc, float beta = 0.f) {
+  Buffer<float> dA, dB, dC; dA.from_host(A, Kc*M); dB.from_host(B, Kc*N); BK_STAGE_C(C, M*N);
+  gemm_tn(dA.data(), dB.data(), dC.data(), M, N, Kc, beta); dC.to_host(C);
+}
+  #undef BK_STAGE_C
+#else
+inline void gemm_hosted(const float* A, const float* B, float* C, int64_t M, int64_t K, int64_t N, float beta = 0.f) { gemm(A, B, C, M, K, N, beta); }
+inline void gemm_nt_hosted(const float* A, const float* B, float* C, int64_t M, int64_t N, int64_t Kc, float beta = 0.f) { gemm_nt(A, B, C, M, N, Kc, beta); }
+inline void gemm_tn_hosted(const float* A, const float* B, float* C, int64_t M, int64_t N, int64_t Kc, float beta = 0.f) { gemm_tn(A, B, C, M, N, Kc, beta); }
+#endif
 
 } // namespace bk

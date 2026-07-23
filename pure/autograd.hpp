@@ -206,19 +206,13 @@ inline Tensor conv2d(const Tensor& in, const Tensor& w, const Tensor& bias,
       im2col_(in->data.data() + n * Cin * H * W, Cin, H, W, kh, kw, OH, OW, stride, pad, colb.data());
       const float* colp = colb.data();
       const float* GOn = op->grad.data() + n * Cout * P;
-      // dW += dO(Cout,P) . col(K,P)^T  (row dot products, contiguous over P)
-      parallel_for(Cout, [&](int64_t co) {
-        const float* g = GOn + co * P; float* gk = GK + co * K;
-        for (int64_t k = 0; k < K; ++k) { const float* crow = colp + k * P; float a = 0; for (int64_t p = 0; p < P; ++p) a += g[p] * crow[p]; gk[k] += a; }
-      });
-      // dcol = W^T(K,Cout) @ dO(Cout,P), then col2im -> dIn
+      // dW(Cout,K) += dO(Cout,P) @ col(K,P)^T   (accumulate across batch n)
+      bk::gemm_nt_hosted(GOn, colp, GK, Cout, K, P, 1.f);
+      // dcol(K,P) = W(Cout,K)^T @ dO(Cout,P), then col2im -> dIn
       thread_local std::vector<float> dcolb;
-      dcolb.assign(K * P, 0.f);
+      dcolb.resize(K * P);
       float* dcol = dcolb.data();
-      parallel_for(K, [&](int64_t k) {
-        float* dcrow = dcol + k * P;
-        for (int64_t co = 0; co < Cout; ++co) { float wv = Wd[co * K + k]; const float* g = GOn + co * P; for (int64_t p = 0; p < P; ++p) dcrow[p] += wv * g[p]; }
-      });
+      bk::gemm_tn_hosted(Wd, GOn, dcol, K, P, Cout, 0.f);
       float* GIn = GI + n * Cin * H * W;
       parallel_for(Cin, [&](int64_t ci) {
         for (int64_t r = 0; r < kh; ++r)
