@@ -144,7 +144,12 @@ A **data-driven builder** runs any size (n/s/m/l/x) from an arch manifest, and a
 self-contained **ONNX reader/writer** exports the net to a standard `.onnx`
 (onnxruntime-verified) and runs a `.onnx` graph-driven in the pure engine — no external
 libraries. **COCO mAP** matches pycocotools (~3e-7), and conv uses im2col+GEMM.
-Remaining: an optional CUDA backend behind the conv seam (see [ROADMAP.md](ROADMAP.md)).
+A single-header **CUDA backend** (`pure/backend.hpp`) compiles the same source to real
+CUDA under `nvcc -DUSE_CUDA`; conv/matmul forward **and backward** route through it, so
+training runs on the GPU. Verified end-to-end on a Colab T4: seam, full yolov8n forward
+(== PyTorch ~3e-5), and a training loop (loss 12→5.2) — see
+[colab/gpu_check.ipynb](colab/gpu_check.ipynb). Remaining: device-resident buffers to
+avoid per-op host↔device copies (see [ROADMAP.md](ROADMAP.md)).
 
 ## Licenses & attribution
 Bundled third-party components keep their own licenses — see
