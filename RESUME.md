@@ -36,6 +36,14 @@ is the forward-looking TODO.
 6. **CPU speed on Apple Silicon** — the CUDA seam doesn't help on Mac (Metal≠CUDA). Add a
    BLAS path to `bk::gemm_hosted` (Apple Accelerate / OpenBLAS) for a big CPU speedup without
    a GPU; a full Metal backend is a much larger, lower-priority effort.
+7. **Verify the unified `train_cli`/`yolo.cpp` under a CUDA build** — compile with
+   `nvcc -DUSE_CUDA` and run COCO128 end-to-end on a (free-Colab) T4. The CUDA seam
+   (`backend.hpp`) + a training loop were verified on T4, but the new dataset-ingestion +
+   augmentation CLI path hasn't been built/run under nvcc yet (aug/dataset are host-side, so
+   it should work; conv/matmul auto-route to `bk::` on GPU). Est. COCO128/640px/100ep on a
+   T4 ≈ 7–20 min. On CPU it is impractical: measured ~5.7 s/image fwd+bwd at 640px
+   (~4.6 GFLOP/s effective, naive GEMM) => COCO128/640px/100ep ≈ ~a day (20–30 h) on
+   M2-class CPU. Smaller imgsz (320 ≈ 4× faster) or a BLAS backend (#6) helps; GPU is the fix.
 
 ## Notes / gotchas
 - Label coords: internally everything is xyxy in the **letterboxed SxS pixel** space; GT and
