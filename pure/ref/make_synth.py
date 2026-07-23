@@ -26,10 +26,12 @@ def gen(name):
     open(os.path.join(D, name + ".txt"), "w").write("\n".join(lines) + "\n")
     return name
 
-names = [gen(f"tr{i:02d}") for i in range(NTR)]
-for i in range(4): gen(f"te{i:02d}")
-with open(os.path.join(D, "list.txt"), "w") as f:
-    f.write(f"{S} {len(names)}\n")
-    for n in names:
-        f.write(f"{D.replace(chr(92),'/')}/{n}.png {D.replace(chr(92),'/')}/{n}.txt\n")
-print(f"wrote {len(names)} train + 4 test images ({S}px) to {D}")
+tr = [gen(f"tr{i:02d}") for i in range(NTR)]
+va = [gen(f"va{i:02d}") for i in range(max(4, NTR // 4))]
+DD = D.replace(chr(92), '/')
+def write_list(fn, names):
+    with open(os.path.join(D, fn), "w") as f:
+        f.write(f"{S} {len(names)}\n")
+        for n in names: f.write(f"{DD}/{n}.png {DD}/{n}.txt\n")
+write_list("list.txt", tr); write_list("val.txt", va)
+print(f"wrote {len(tr)} train + {len(va)} val images ({S}px) to {D}")

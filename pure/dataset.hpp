@@ -91,3 +91,44 @@ inline Batch load_batch(const std::string& list_path) {
     }
   return bt;
 }
+
+// ------------------------- dataset (multi-epoch, minibatch, augmentation) -------------------------
+#include <random>
+struct Sample { std::string img, lbl; };
+struct Dataset { int64_t S = 0; std::vector<Sample> items; };
+
+// list.txt: "S N" then N lines "<image> <label>".
+inline Dataset read_dataset(const std::string& list_path) {
+  std::ifstream f(list_path); if (!f) { printf("cannot open %s\n", list_path.c_str()); std::exit(1); }
+  Dataset d; int64_t N; f >> d.S >> N; d.items.resize(N);
+  for (auto& s : d.items) f >> s.img >> s.lbl;
+  return d;
+}
+
+// Load a mini-batch (the given indices) into (B,3,S,S) + padded GT. Square images ->
+// letterbox is identity. Light augmentation: horizontal flip + brightness/contrast jitter.
+inline Batch load_minibatch(const Dataset& d, const std::vector<int>& idx, bool augment, uint32_t seed) {
+  std::mt19937 rng(seed); std::uniform_real_distribution<float> U(0.f, 1.f);
+  int64_t B = (int64_t)idx.size(), S = d.S;
+  std::vector<std::vector<float>> gbs(B); std::vector<std::vector<int64_t>> gls(B);
+  Batch bt; bt.B = B; bt.x = make_tensor({B, 3, S, S}); int64_t M = 0;
+  for (int64_t n = 0; n < B; ++n) {
+    Letterbox lb; auto xi = load_image_letterbox(d.items[idx[n]].img, S, lb);
+    load_labels(d.items[idx[n]].lbl, gbs[n], gls[n]);
+    bool flip = augment && U(rng) < 0.5f;
+    float bri = augment ? 0.8f + 0.4f * U(rng) : 1.f;       // brightness 0.8..1.2
+    float* dst = bt.x->data.data() + n * 3 * S * S;
+    for (int c = 0; c < 3; ++c) for (int64_t y = 0; y < S; ++y) for (int64_t x = 0; x < S; ++x) {
+      float v = xi->data[(c * S + y) * S + (flip ? S - 1 - x : x)] * bri;
+      dst[(c * S + y) * S + x] = v < 0 ? 0 : (v > 1 ? 1 : v);
+    }
+    if (flip) for (size_t m = 0; m < gls[n].size(); ++m) { float x1 = gbs[n][m*4], x2 = gbs[n][m*4+2]; gbs[n][m*4] = S - x2; gbs[n][m*4+2] = S - x1; }
+    M = std::max<int64_t>(M, (int64_t)gls[n].size());
+  }
+  bt.M = M; bt.gt_boxes.assign(B*M*4, 0.f); bt.gt_labels.assign(B*M, 0); bt.mask.assign(B*M, 0.f);
+  for (int64_t n = 0; n < B; ++n) for (size_t m = 0; m < gls[n].size(); ++m) {
+    bt.gt_labels[n*M+m] = gls[n][m]; bt.mask[n*M+m] = 1.f;
+    for (int j = 0; j < 4; ++j) bt.gt_boxes[(n*M+m)*4+j] = gbs[n][m*4+j];
+  }
+  return bt;
+}

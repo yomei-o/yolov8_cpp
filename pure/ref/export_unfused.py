@@ -17,20 +17,28 @@ mods = walk(ym.model)
 depths = [len(mm.m) for mm in ym.model.modules() if type(mm).__name__ == "C2f"]
 
 def save(n, t): t.detach().contiguous().float().cpu().numpy().tofile(os.path.join(D, n))
+qn = {id(mm): nm for nm, mm in ym.model.named_modules()}   # module -> state_dict prefix
 lines = [str(len(mods))]
+names = []            # state_dict KEY per emitted tensor, in engine (mods) order — the
+                      # engine's C2f emit order differs from state_dict order, so the C++
+                      # checkpointer must pair by NAME (load_state_dict matches by key).
 for i, m in enumerate(mods):
+    p = qn[id(m)]
     if hasattr(m, "bn"):                                  # Conv = conv(no bias)+BN+SiLU
         conv, bn = m.conv, m.bn
         save(f"cw{i}.bin", conv.weight)
         save(f"bg{i}.bin", bn.weight); save(f"bb{i}.bin", bn.bias)
         save(f"rm{i}.bin", bn.running_mean); save(f"rv{i}.bin", bn.running_var)
+        names += [f"{p}.conv.weight", f"{p}.bn.weight", f"{p}.bn.bias", f"{p}.bn.running_mean", f"{p}.bn.running_var"]
         Co, Ci, k, s = conv.weight.shape[0], conv.weight.shape[1], conv.kernel_size[0], conv.stride[0]
         lines.append(f"1 {Co} {Ci} {k} {s} {bn.eps}")     # kind 1 = conv+bn+act
     else:                                                 # plain nn.Conv2d (bias, no act)
         save(f"cw{i}.bin", m.weight); save(f"cb{i}.bin", m.bias)
+        names += [f"{p}.weight", f"{p}.bias"]
         Co, Ci, k, s = m.weight.shape[0], m.weight.shape[1], m.kernel_size[0], m.stride[0]
         lines.append(f"0 {Co} {Ci} {k} {s} 0")            # kind 0 = plain conv
 open(os.path.join(D, "manifest_unfused.txt"), "w").write("\n".join(lines) + "\n")
+open(os.path.join(D, "names.txt"), "w").write("\n".join(names) + "\n")
 open(os.path.join(D, "depths.txt"), "w").write(" ".join(map(str, depths)) + "\n")
 
 # reuse fused export's input + reference if present; otherwise (re)generate them here.
