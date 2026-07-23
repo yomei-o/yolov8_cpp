@@ -1,15 +1,20 @@
 // POC: ONE source file, runs on CPU or GPU, chosen at compile time via Thrust's switchable
 // "device system" — so device-resident buffers do NOT lock us into CUDA.
 //
-//   CPU (MSVC, CCCL headers):
-//     cl /std:c++17 /O2 /EHsc /DTHRUST_DEVICE_SYSTEM=THRUST_DEVICE_SYSTEM_CPP \
-//        /I<cccl>/thrust /I<cccl>/cub /I<cccl>/libcudacxx/include pure\thrust_poc.cpp
+//   CPU (MSVC + CUDA-13 CCCL headers) — VERIFIED locally, prints sum=147432.281250:
+//     cl /std:c++17 /O2 /EHsc /Zc:preprocessor /DNOMINMAX \
+//        /DTHRUST_DEVICE_SYSTEM=THRUST_DEVICE_SYSTEM_CPP \
+//        /I"%CUDA%/include/cccl" /I"%CUDA%/include" pure\thrust_poc.cpp
+//     (CCCL on MSVC REQUIRES /Zc:preprocessor and /DNOMINMAX; thrust lives in include/cccl/.)
+//   GPU (nvcc) — VERIFIED to COMPILE locally (no GPU to run); runs on Colab:
+//     nvcc -x cu -O2 -std=c++17 --extended-lambda pure/thrust_poc.cpp -o poc_gpu
+//     (Windows/no-vcvars: set INCLUDE/LIB to the MSVC+SDK paths, add
+//      -ccbin <MSVC x64 bin> -Xcompiler "/Zc:preprocessor /EHsc /DNOMINMAX".)
 //   CPU (Colab g++):
 //     g++ -O2 -std=c++17 -I/usr/local/cuda/include \
 //        -DTHRUST_DEVICE_SYSTEM=THRUST_DEVICE_SYSTEM_CPP pure/thrust_poc.cpp -o poc_cpu
 //     (or ...=THRUST_DEVICE_SYSTEM_OMP -fopenmp  for multicore CPU)
-//   GPU (Colab nvcc):
-//     nvcc -x cu -O2 -std=c++17 --extended-lambda pure/thrust_poc.cpp -o poc_gpu
+//   PARITY: CPU and GPU builds must print the same sum (147432.281250).
 //
 // Shows a device-resident buffer (thrust::device_vector) with two CHAINED ops (SiLU then
 // scale) + a reduction — all on the selected backend, with NO host round-trip between ops.
