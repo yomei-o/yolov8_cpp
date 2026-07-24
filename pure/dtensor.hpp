@@ -57,9 +57,9 @@ inline DT dadd(DT a, DT b) {
   DT y = dmake(a->shape);
   thrust::transform(a->data.begin(), a->data.end(), b->data.begin(), y->data.begin(), thrust::plus<float>());
   y->parents = {a, b};
-  y->backward_fn = [a, b, y]() {
-    thrust::transform(a->grad.begin(), a->grad.end(), y->grad.begin(), a->grad.begin(), thrust::plus<float>());
-    thrust::transform(b->grad.begin(), b->grad.end(), y->grad.begin(), b->grad.begin(), thrust::plus<float>());
+  y->backward_fn = [a, b, yo = y.get()]() {                 // yo = raw ptr: no shared_ptr cycle
+    thrust::transform(a->grad.begin(), a->grad.end(), yo->grad.begin(), a->grad.begin(), thrust::plus<float>());
+    thrust::transform(b->grad.begin(), b->grad.end(), yo->grad.begin(), b->grad.begin(), thrust::plus<float>());
   };
   return y;
 }
@@ -67,11 +67,11 @@ inline DT dmul(DT a, DT b) {                 // Hadamard
   DT y = dmake(a->shape);
   thrust::transform(a->data.begin(), a->data.end(), b->data.begin(), y->data.begin(), thrust::multiplies<float>());
   y->parents = {a, b};
-  y->backward_fn = [a, b, y]() {
+  y->backward_fn = [a, b, yo = y.get()]() {
     thrust::device_vector<float> t(a->numel());
-    thrust::transform(y->grad.begin(), y->grad.end(), b->data.begin(), t.begin(), thrust::multiplies<float>());
+    thrust::transform(yo->grad.begin(), yo->grad.end(), b->data.begin(), t.begin(), thrust::multiplies<float>());
     thrust::transform(a->grad.begin(), a->grad.end(), t.begin(), a->grad.begin(), thrust::plus<float>());
-    thrust::transform(y->grad.begin(), y->grad.end(), a->data.begin(), t.begin(), thrust::multiplies<float>());
+    thrust::transform(yo->grad.begin(), yo->grad.end(), a->data.begin(), t.begin(), thrust::multiplies<float>());
     thrust::transform(b->grad.begin(), b->grad.end(), t.begin(), b->grad.begin(), thrust::plus<float>());
   };
   return y;
@@ -80,10 +80,10 @@ inline DT dsilu(DT x) {
   DT y = dmake(x->shape);
   thrust::transform(x->data.begin(), x->data.end(), y->data.begin(), SiLUf());
   y->parents = {x};
-  y->backward_fn = [x, y]() {
+  y->backward_fn = [x, yo = y.get()]() {
     thrust::device_vector<float> d(x->numel());
     thrust::transform(x->data.begin(), x->data.end(), d.begin(), dSiLUf());       // silu'(x)
-    thrust::transform(y->grad.begin(), y->grad.end(), d.begin(), d.begin(), thrust::multiplies<float>());
+    thrust::transform(yo->grad.begin(), yo->grad.end(), d.begin(), d.begin(), thrust::multiplies<float>());
     thrust::transform(x->grad.begin(), x->grad.end(), d.begin(), x->grad.begin(), thrust::plus<float>());
   };
   return y;
@@ -95,9 +95,9 @@ inline DT dmatmul(DT A, DT B) {
   DT Y = dmake({M, N});
   bk::gemm(A->dp(), B->dp(), Y->dp(), M, K, N);
   Y->parents = {A, B};
-  Y->backward_fn = [A, B, Y, M, K, N]() {
-    bk::gemm_nt(Y->gp(), B->dp(), A->gp(), M, K, N, 1.f);   // dA[M,K] += dY[M,N] * B[K,N]^T
-    bk::gemm_tn(A->dp(), Y->gp(), B->gp(), K, N, M, 1.f);   // dB[K,N] += A[M,K]^T * dY[M,N]
+  Y->backward_fn = [A, B, M, K, N, Yo = Y.get()]() {
+    bk::gemm_nt(Yo->gp(), B->dp(), A->gp(), M, K, N, 1.f);  // dA[M,K] += dY[M,N] * B[K,N]^T
+    bk::gemm_tn(A->dp(), Yo->gp(), B->gp(), K, N, M, 1.f);  // dB[K,N] += A[M,K]^T * dY[M,N]
   };
   return Y;
 }
@@ -147,8 +147,8 @@ inline DT dconv2d(DT in, DT w, DT bias, int64_t stride, int64_t pad) {
     }
   }
   o->parents = bias ? std::vector<DT>{in,w,bias} : std::vector<DT>{in,w};
-  o->backward_fn = [in,w,bias,o,N,Cin,H,Wd,Cout,kh,kw,OH,OW,stride,pad,K,P]() {
-    if (bias) { float* GB = bias->gp(); float* GO = o->gp();
+  o->backward_fn = [in,w,bias,N,Cin,H,Wd,Cout,kh,kw,OH,OW,stride,pad,K,P, oo=o.get()]() {
+    if (bias) { float* GB = bias->gp(); float* GO = oo->gp();
       bk::parallel_for(Cout, [=] BK_HD (int64_t co) { float a = 0.f;
         for (int64_t n = 0; n < N; ++n) { const float* g = GO + (n*Cout+co)*P; for (int64_t p = 0; p < P; ++p) a += g[p]; }
         GB[co] += a; }); }
@@ -156,8 +156,8 @@ inline DT dconv2d(DT in, DT w, DT bias, int64_t stride, int64_t pad) {
     float* colp = thrust::raw_pointer_cast(col.data()), *dcolp = thrust::raw_pointer_cast(dcol.data());
     for (int64_t n = 0; n < N; ++n) {
       dim2col(in->dp() + n*Cin*H*Wd, Cin, H, Wd, kh, kw, OH, OW, stride, pad, colp);
-      bk::gemm_nt(o->gp() + n*Cout*P, colp, w->gp(), Cout, K, P, 1.f);      // dW += dO(Cout,P)*col(K,P)^T
-      bk::gemm_tn(w->dp(), o->gp() + n*Cout*P, dcolp, K, P, Cout, 0.f);     // dcol = W^T * dO
+      bk::gemm_nt(oo->gp() + n*Cout*P, colp, w->gp(), Cout, K, P, 1.f);     // dW += dO(Cout,P)*col(K,P)^T
+      bk::gemm_tn(w->dp(), oo->gp() + n*Cout*P, dcolp, K, P, Cout, 0.f);    // dcol = W^T * dO
       dcol2im(dcolp, Cin, H, Wd, kh, kw, OH, OW, stride, pad, in->gp() + n*Cin*H*Wd);
     }
   };
@@ -169,8 +169,8 @@ inline DT dsum(DT x) {
   DT y = dmake({1});
   y->data[0] = thrust::reduce(x->data.begin(), x->data.end(), 0.f);
   y->parents = {x};
-  y->backward_fn = [x, y]() {
-    float g = y->grad[0];                                  // scalar broadcast to all inputs
+  y->backward_fn = [x, yo = y.get()]() {
+    float g = yo->grad[0];                                 // scalar broadcast to all inputs
     thrust::transform(x->grad.begin(), x->grad.end(), x->grad.begin(), AddCf{g});
   };
   return y;
@@ -187,10 +187,10 @@ inline DT dconcat(std::vector<DT> xs) {                 // along channel dim
       thrust::copy(t->data.begin()+n*blk, t->data.begin()+(n+1)*blk, y->data.begin()+n*C*H*W + off*H*W);
     off += Ck; }
   y->parents = xs;
-  y->backward_fn = [xs, y, N, C, H, W]() {
+  y->backward_fn = [xs, N, C, H, W, yo = y.get()]() {
     int64_t off = 0;
     for (auto& t : xs) { int64_t Ck = t->shape[1], blk = Ck*H*W;
-      for (int64_t n = 0; n < N; ++n) { auto ys = y->grad.begin()+n*C*H*W + off*H*W;
+      for (int64_t n = 0; n < N; ++n) { auto ys = yo->grad.begin()+n*C*H*W + off*H*W;
         thrust::transform(ys, ys+blk, t->grad.begin()+n*blk, t->grad.begin()+n*blk, thrust::plus<float>()); }
       off += Ck; }
   };
@@ -203,8 +203,8 @@ inline DT dslice(DT x, int64_t c0, int64_t c1) {        // channels [c0, c1)
   for (int64_t n = 0; n < N; ++n)
     thrust::copy(x->data.begin()+n*xblk + c0*H*W, x->data.begin()+n*xblk + c1*H*W, y->data.begin()+n*blk);
   y->parents = {x};
-  y->backward_fn = [x, y, N, C, H, W, c0, Cs, blk, xblk]() {
-    for (int64_t n = 0; n < N; ++n) { auto ys = y->grad.begin()+n*blk;
+  y->backward_fn = [x, N, C, H, W, c0, Cs, blk, xblk, yo = y.get()]() {
+    for (int64_t n = 0; n < N; ++n) { auto ys = yo->grad.begin()+n*blk;
       thrust::transform(ys, ys+blk, x->grad.begin()+n*xblk + c0*H*W, x->grad.begin()+n*xblk + c0*H*W, thrust::plus<float>()); }
   };
   return y;
@@ -218,8 +218,8 @@ inline DT dupsample2x(DT x) {                            // nearest-neighbour 2x
     Y[idx] = X[((n*C+c)*H + oh/2)*W + ow/2];
   });
   y->parents = {x};
-  y->backward_fn = [x, y, N, C, H, W, OH, OW]() {
-    const float* GY = y->gp(); float* GX = x->gp();
+  y->backward_fn = [x, N, C, H, W, OH, OW, yo = y.get()]() {
+    const float* GY = yo->gp(); float* GX = x->gp();
     bk::parallel_for(N*C*H*W, [=] BK_HD (int64_t idx) {   // per input element: sum its 2x2 (race-free)
       int64_t iw = idx%W, t = idx/W, ih = t%H, t2 = t/H, c = t2%C, n = t2/C; float a = 0.f;
       for (int dy = 0; dy < 2; ++dy) for (int dx = 0; dx < 2; ++dx) a += GY[((n*C+c)*OH + 2*ih+dy)*OW + 2*iw+dx];
@@ -244,8 +244,8 @@ inline DT dmaxpool2d(DT x, int64_t k, int64_t s, int64_t p) {
     Y[idx] = best; AI[idx] = bi;
   });
   y->parents = {x};
-  y->backward_fn = [x, y, argi, N, C, OH, OW]() {
-    const float* GY = y->gp(); float* GX = x->gp(); const int64_t* AI = thrust::raw_pointer_cast(argi->data());
+  y->backward_fn = [x, argi, N, C, OH, OW, yo = y.get()]() {
+    const float* GY = yo->gp(); float* GX = x->gp(); const int64_t* AI = thrust::raw_pointer_cast(argi->data());
     bk::parallel_for(N*C, [=] BK_HD (int64_t nc) {        // per (n,c) plane: scatter to argmax (race-free)
       int64_t base = nc*OH*OW;
       for (int64_t o = 0; o < OH*OW; ++o) { int64_t ii = AI[base+o]; if (ii >= 0) GX[ii] += GY[base+o]; }
@@ -274,8 +274,8 @@ inline DT dbn(DT x, DT gamma, DT beta, float eps = 1e-5f) {
     int64_t c = (idx/HW) % C; Y[idx] = G[c]*(X[idx]-MEAN[c])*RSTD[c] + B[c];
   });
   y->parents = {x, gamma, beta};
-  y->backward_fn = [x, gamma, beta, y, mean, rstd, N, C, HW, M]() {
-    const float* X = x->dp(); const float* GY = y->gp();
+  y->backward_fn = [x, gamma, beta, mean, rstd, N, C, HW, M, yo = y.get()]() {
+    const float* X = x->dp(); const float* GY = yo->gp();
     float* GX = x->gp(); float* GG = gamma->gp(); float* GB = beta->gp(); const float* Gd = gamma->dp();
     const float* MEAN = thrust::raw_pointer_cast(mean->data()); const float* RSTD = thrust::raw_pointer_cast(rstd->data());
     thrust::device_vector<float> sdy(C, 0.f), sdyx(C, 0.f);
