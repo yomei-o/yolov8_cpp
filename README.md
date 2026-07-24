@@ -118,6 +118,27 @@ Augmentation (mosaic, mixup, random-affine, HSV, flip, close-mosaic) lives in `p
 **Remaining work** (real-dataset convergence parity, custom `nc`, in-CLI export, EMA/resume,
 speed, Apple-Silicon BLAS) is tracked in **[RESUME.md](RESUME.md)**.
 
+### Device-resident GPU track (`pure/dtensor.hpp`, `pure/dnet.hpp`)
+
+A second engine keeps tensors **device-resident** (data/grad in a `thrust::device_vector`) so
+there are no per-op host↔device copies. The **same source builds CPU or GPU** via Thrust's
+switchable device system — no CUDA lock-in:
+```sh
+# GPU (needs CUDA/nvcc):  add -DUSE_CUBLAS -lcublas for the cuBLAS GEMM fast path
+nvcc -x cu -O2 -std=c++17 --extended-lambda -arch=native -DUSE_CUDA -Ipure/third_party \
+     pure/dtrain_coco.cpp -o dtrain_coco
+# CPU (same source, host device system):
+g++ -O2 -std=c++17 -I<cuda>/include/cccl -DTHRUST_DEVICE_SYSTEM=THRUST_DEVICE_SYSTEM_CPP \
+     -Ipure/third_party pure/dtrain_coco.cpp -o dtrain_coco
+./dtrain_coco <images_dir> <imgsz> <batch> <epochs> [model=yolov8n]   # saves last.pt/best.pt
+```
+`dnet.hpp` is a size-agnostic device yolov8 (any of n/s/m/l/x via `pure/ref/arch/<model>/`).
+Verified on a Colab T4: the full forward matches the CPU engine (~3e-5), real COCO128 training
+with the v8 loss runs device-resident, and it's **~2.4× faster than the hosted path (3.2× with
+cuBLAS)**. Ready-to-run notebooks are under [`colab/`](colab/) (`dnet_test`, `dtrain_coco`,
+`dtrain_cublas`, `train_coco320`, …). This track needs CUDA's CCCL (Thrust) headers; the plain
+`pure/` engine above needs none.
+
 ## Two tracks
 
 ### 1. LibTorch track — port the v8 loss, then train the real yolov8n
