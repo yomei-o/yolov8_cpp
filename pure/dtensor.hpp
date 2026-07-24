@@ -294,6 +294,32 @@ inline DT dbn(DT x, DT gamma, DT beta, float eps = 1e-5f) {
   return y;
 }
 
+// ---- device-resident Adam / AdamW ----
+struct DAdam {
+  std::vector<DT> params; float lr, b1, b2, eps, wd; int t = 0;
+  std::vector<thrust::device_vector<float>> m, v;
+  DAdam(std::vector<DT> p, float lr_ = 1e-3f, float b1_ = 0.9f, float b2_ = 0.999f, float eps_ = 1e-8f, float wd_ = 0.f)
+    : params(std::move(p)), lr(lr_), b1(b1_), b2(b2_), eps(eps_), wd(wd_) {
+    for (auto& pt : params) { m.emplace_back(pt->numel(), 0.f); v.emplace_back(pt->numel(), 0.f); }
+  }
+  void zero_grad() { for (auto& p : params) thrust::fill(p->grad.begin(), p->grad.end(), 0.f); }
+  void step() {
+    ++t; float bc1 = 1.f - std::pow(b1, t), bc2 = 1.f - std::pow(b2, t);
+    float lr = this->lr, b1 = this->b1, b2 = this->b2, eps = this->eps, wd = this->wd;
+    for (size_t i = 0; i < params.size(); ++i) {
+      float* P = params[i]->dp(); const float* G = params[i]->gp();
+      float* M = thrust::raw_pointer_cast(m[i].data()); float* V = thrust::raw_pointer_cast(v[i].data());
+      int64_t n = params[i]->numel();
+      bk::parallel_for(n, [=] BK_HD (int64_t j) {
+        float g = G[j] + wd * P[j];
+        float mm = b1*M[j] + (1.f-b1)*g, vv = b2*V[j] + (1.f-b2)*g*g;
+        M[j] = mm; V[j] = vv;
+        P[j] -= lr * (mm/bc1) / (sqrtf(vv/bc2) + eps);
+      });
+    }
+  }
+};
+
 // ---- reverse-mode backward over the tape ----
 inline void dbackward(DT root) {
   std::vector<DT> topo; std::unordered_set<DNode*> seen;
