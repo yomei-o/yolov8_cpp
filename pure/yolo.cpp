@@ -84,7 +84,14 @@ static const char* COCO[80] = {
 
 // load engine from a .pt (falls back to .bin export) + depths
 static ProviderU load_model(const std::string& weights, std::vector<int64_t>& dep) {
-  { std::ifstream f(DN + "depths.txt"); int64_t v; while (f >> v) dep.push_back(v); }
+  // depths.txt = per-stage C2f repeat counts (the arch). Missing/empty would leave `dep`
+  // empty -> a broken forward that emits NaN, so fail LOUDLY instead of silently.
+  { std::ifstream f(DN + "depths.txt");
+    if (!f) { printf("cannot open %sdepths.txt (yolov8 depth descriptor).\n"
+                     "  It ships per size under pure/ref/arch/yolov8<n/s/m/l/x>/; restore it or run the exporter.\n",
+                     DN.c_str()); std::exit(1); }
+    int64_t v; while (f >> v) dep.push_back(v);
+    if (dep.empty()) { printf("empty %sdepths.txt (expected per-stage repeat counts)\n", DN.c_str()); std::exit(1); } }
   std::ifstream t(weights);
   if (t.good()) { printf("weights <- %s (pure C++)\n", weights.c_str()); return load_net_unfused_pt(DN, weights); }
   return load_net_unfused(DN);
