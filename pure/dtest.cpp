@@ -25,9 +25,12 @@ static float forward_L(const std::vector<float>& xh, const std::vector<float>& w
 }
 
 int main() {
-  DT x = dfrom(XS, XH), W = dfrom(WS, WH);
-  DT L = dsum(dsilu(dmatmul(x, W)));
-  dbackward(L);
+  fprintf(stderr, "[0] start\n");
+  DT x = dfrom(XS, XH), W = dfrom(WS, WH);           bk::sync(); fprintf(stderr, "[1] inputs on device\n");
+  DT mm = dmatmul(x, W);                             bk::sync(); fprintf(stderr, "[2] matmul ok\n");
+  DT ys = dsilu(mm);                                 bk::sync(); fprintf(stderr, "[3] silu ok\n");
+  DT L  = dsum(ys);                                  bk::sync(); fprintf(stderr, "[4] sum ok  L=%.6f\n", dto_host(L)[0]);
+  dbackward(L);                                      bk::sync(); fprintf(stderr, "[5] backward ok\n");
 
   std::vector<float> xg = dto_host(x), Wg_ignored;      // (data, not grad — need grad below)
   float Lval = dto_host(L)[0];
