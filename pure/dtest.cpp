@@ -8,7 +8,9 @@
 //        /I"%CUDA%/include/cccl" /I"%CUDA%/include" pure\dtest.cpp
 //   CPU (Colab g++): g++ -O2 -std=c++17 -I/usr/local/cuda/include
 //        -DTHRUST_DEVICE_SYSTEM=THRUST_DEVICE_SYSTEM_CPP pure/dtest.cpp -o dtest_cpu
-//   GPU (Colab nvcc): nvcc -x cu -O2 -std=c++17 --extended-lambda pure/dtest.cpp -o dtest_gpu
+//   GPU (Colab nvcc): nvcc -x cu -O2 -std=c++17 --extended-lambda -arch=native -DUSE_CUDA pure/dtest.cpp -o dtest_gpu
+//     (-DUSE_CUDA is REQUIRED: it switches bk::gemm to the device path so it matches thrust's
+//      device_vector memory. Without it bk::gemm runs on the host over device pointers -> segfault.)
 #include "dtensor.hpp"
 #include <cstdio>
 #include <numeric>
