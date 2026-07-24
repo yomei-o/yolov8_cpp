@@ -254,6 +254,46 @@ inline DT dmaxpool2d(DT x, int64_t k, int64_t s, int64_t p) {
   return y;
 }
 
+// ---- BatchNorm2d (training, biased batch var), device-resident ----
+// Per-channel stats reduced over N*H*W (kernel parallel over C). Matches bn.hpp math.
+inline DT dbn(DT x, DT gamma, DT beta, float eps = 1e-5f) {
+  int64_t N = x->shape[0], C = x->shape[1], H = x->shape[2], W = x->shape[3], HW = H*W, M = N*HW;
+  DT y = dmake({N, C, H, W});
+  auto mean = std::make_shared<thrust::device_vector<float>>(C, 0.f);
+  auto rstd = std::make_shared<thrust::device_vector<float>>(C, 0.f);
+  const float* X = x->dp(); float* Y = y->dp();
+  float* MEAN = thrust::raw_pointer_cast(mean->data()), *RSTD = thrust::raw_pointer_cast(rstd->data());
+  const float* G = gamma->dp(); const float* B = beta->dp();
+  bk::parallel_for(C, [=] BK_HD (int64_t c) {                     // batch mean/var per channel
+    double s = 0, sq = 0;
+    for (int64_t n = 0; n < N; ++n) { int64_t base = n*C*HW + c*HW; for (int64_t j = 0; j < HW; ++j) { float v = X[base+j]; s += v; sq += (double)v*v; } }
+    double mu = s/M, var = sq/M - mu*mu; if (var < 0) var = 0;
+    MEAN[c] = (float)mu; RSTD[c] = (float)(1.0 / sqrt(var + eps));
+  });
+  bk::parallel_for(N*C*HW, [=] BK_HD (int64_t idx) {              // normalize + affine
+    int64_t c = (idx/HW) % C; Y[idx] = G[c]*(X[idx]-MEAN[c])*RSTD[c] + B[c];
+  });
+  y->parents = {x, gamma, beta};
+  y->backward_fn = [x, gamma, beta, y, mean, rstd, N, C, HW, M]() {
+    const float* X = x->dp(); const float* GY = y->gp();
+    float* GX = x->gp(); float* GG = gamma->gp(); float* GB = beta->gp(); const float* Gd = gamma->dp();
+    const float* MEAN = thrust::raw_pointer_cast(mean->data()); const float* RSTD = thrust::raw_pointer_cast(rstd->data());
+    thrust::device_vector<float> sdy(C, 0.f), sdyx(C, 0.f);
+    float* SDY = thrust::raw_pointer_cast(sdy.data()); float* SDYX = thrust::raw_pointer_cast(sdyx.data());
+    bk::parallel_for(C, [=] BK_HD (int64_t c) {                   // Σdy, Σ(dy*xhat) per channel; accumulate dgamma/dbeta
+      double a = 0, b = 0; float mu = MEAN[c], rs = RSTD[c];
+      for (int64_t n = 0; n < N; ++n) { int64_t base = n*C*HW + c*HW; for (int64_t j = 0; j < HW; ++j) { int64_t idx = base+j; float dy = GY[idx], xhat = (X[idx]-mu)*rs; a += dy; b += (double)dy*xhat; } }
+      SDY[c] = (float)a; SDYX[c] = (float)b; GB[c] += (float)a; GG[c] += (float)b;
+    });
+    float invM = 1.f/(float)M;
+    bk::parallel_for(N*C*HW, [=] BK_HD (int64_t idx) {            // dx
+      int64_t c = (idx/HW) % C; float mu = MEAN[c], rs = RSTD[c], g = Gd[c], xhat = (X[idx]-mu)*rs;
+      GX[idx] += g*rs*(GY[idx] - invM*SDY[c] - xhat*invM*SDYX[c]);
+    });
+  };
+  return y;
+}
+
 // ---- reverse-mode backward over the tape ----
 inline void dbackward(DT root) {
   std::vector<DT> topo; std::unordered_set<DNode*> seen;
