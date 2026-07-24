@@ -135,9 +135,13 @@ g++ -O2 -std=c++17 -I<cuda>/include/cccl -DTHRUST_DEVICE_SYSTEM=THRUST_DEVICE_SY
 `dnet.hpp` is a size-agnostic device yolov8 (any of n/s/m/l/x via `pure/ref/arch/<model>/`).
 Verified on a Colab T4: the full forward matches the CPU engine (~3e-5), real COCO128 training
 with the v8 loss runs device-resident, and it's **~2.4× faster than the hosted path (3.2× with
-cuBLAS)**. Ready-to-run notebooks are under [`colab/`](colab/) (`dnet_test`, `dtrain_coco`,
-`dtrain_cublas`, `train_coco320`, …). This track needs CUDA's CCCL (Thrust) headers; the plain
-`pure/` engine above needs none.
+cuBLAS)**. This track needs CUDA's CCCL (Thrust) headers; the plain `pure/` engine above needs none.
+
+**Ready-to-run Colab notebooks** ([`colab/`](colab/)):
+- [Train COCO128 → detect → show image](https://colab.research.google.com/github/yomei-o/yolov8_cpp/blob/main/colab/train_detect_coco320.ipynb) — the end-to-end demo
+- [COCO128 training + cuBLAS speed](https://colab.research.google.com/github/yomei-o/yolov8_cpp/blob/main/colab/dtrain_cublas.ipynb)
+- [Full yolov8n forward parity (device vs CPU engine)](https://colab.research.google.com/github/yomei-o/yolov8_cpp/blob/main/colab/dnet_test.ipynb)
+- [GPU backend check](https://colab.research.google.com/github/yomei-o/yolov8_cpp/blob/main/colab/gpu_check.ipynb)
 
 ## Two tracks
 
