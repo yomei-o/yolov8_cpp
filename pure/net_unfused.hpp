@@ -45,7 +45,9 @@ inline ProviderU load_net_unfused(const std::string& D) {
 inline ProviderU load_net_unfused_pt(const std::string& D, const std::string& pt_path) {
   std::ifstream f(D + "manifest_unfused.txt"); if (!f) { printf("missing %smanifest_unfused.txt\n", D.c_str()); std::exit(1); }
   std::vector<std::string> names; { std::ifstream nf(D + "names.txt"); std::string s; while (nf >> s) names.push_back(s); }
-  std::map<std::string, std::vector<float>> W; for (auto& t : pt::load_pt(pt_path)) W[t.name] = t.data;
+  // state_dict .pt (make_init_pt output) OR a raw Ultralytics {'model': nn.Module} checkpoint.
+  auto ts = pt::load_pt(pt_path); if (ts.empty()) ts = pt::load_pt_module(pt_path);
+  std::map<std::string, std::vector<float>> W; for (auto& t : ts) W[t.name] = t.data;
   auto get = [&](size_t idx) -> std::vector<float>& {
     auto it = W.find(names[idx]); if (it == W.end()) { printf("key not in %s: %s\n", pt_path.c_str(), names[idx].c_str()); std::exit(1); } return it->second; };
   int n; f >> n; ProviderU p; size_t ni = 0;
