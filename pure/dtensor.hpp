@@ -332,3 +332,16 @@ inline void dbackward(DT root) {
   for (auto it = topo.rbegin(); it != topo.rend(); ++it)
     if ((*it)->backward_fn) (*it)->backward_fn();
 }
+
+// Backward from multiple head nodes whose .grad the caller has ALREADY set (e.g. injected
+// from an external loss). Does NOT re-seed — just runs the tape in reverse topo order.
+inline void dbackward_from(const std::vector<DT>& heads) {
+  std::vector<DT> topo; std::unordered_set<DNode*> seen;
+  std::function<void(const DT&)> build = [&](const DT& n) {
+    if (!n || seen.count(n.get())) return; seen.insert(n.get());
+    for (auto& p : n->parents) build(p); topo.push_back(n);
+  };
+  for (auto& h : heads) build(h);
+  for (auto it = topo.rbegin(); it != topo.rend(); ++it)
+    if ((*it)->backward_fn) (*it)->backward_fn();
+}
