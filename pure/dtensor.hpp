@@ -256,7 +256,9 @@ inline DT dmaxpool2d(DT x, int64_t k, int64_t s, int64_t p) {
 
 // ---- BatchNorm2d (training, biased batch var), device-resident ----
 // Per-channel stats reduced over N*H*W (kernel parallel over C). Matches bn.hpp math.
-inline DT dbn(DT x, DT gamma, DT beta, float eps = 1e-5f) {
+// rm/rv (optional): running_mean/var device tensors, EMA-updated in training so the model
+// can be saved for eval (biased var normalises; unbiased updates running_var, per bn.hpp).
+inline DT dbn(DT x, DT gamma, DT beta, float eps = 1e-5f, DT rm = DT(), DT rv = DT(), float mom = 0.03f) {
   int64_t N = x->shape[0], C = x->shape[1], H = x->shape[2], W = x->shape[3], HW = H*W, M = N*HW;
   DT y = dmake({N, C, H, W});
   auto mean = std::make_shared<thrust::device_vector<float>>(C, 0.f);
@@ -270,6 +272,11 @@ inline DT dbn(DT x, DT gamma, DT beta, float eps = 1e-5f) {
     double mu = s/M, var = sq/M - mu*mu; if (var < 0) var = 0;
     MEAN[c] = (float)mu; RSTD[c] = (float)(1.0 / sqrt(var + eps));
   });
+  if (rm && rv) { float* RM = rm->dp(); float* RV = rv->dp(); float m_ = mom, e_ = eps; int64_t MM = M;
+    bk::parallel_for(C, [=] BK_HD (int64_t c) {                   // EMA running stats
+      float var = 1.f/(RSTD[c]*RSTD[c]) - e_; float vunb = MM > 1 ? var*(float)MM/(float)(MM-1) : var;
+      RM[c] = (1.f-m_)*RM[c] + m_*MEAN[c]; RV[c] = (1.f-m_)*RV[c] + m_*vunb;
+    }); }
   bk::parallel_for(N*C*HW, [=] BK_HD (int64_t idx) {              // normalize + affine
     int64_t c = (idx/HW) % C; Y[idx] = G[c]*(X[idx]-MEAN[c])*RSTD[c] + B[c];
   });
