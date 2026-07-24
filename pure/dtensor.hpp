@@ -176,6 +176,84 @@ inline DT dsum(DT x) {
   return y;
 }
 
+// ---- structural ops (NCHW): concat / slice / upsample2x / maxpool2d ----
+inline DT dconcat(std::vector<DT> xs) {                 // along channel dim
+  int64_t N = xs[0]->shape[0], H = xs[0]->shape[2], W = xs[0]->shape[3], C = 0;
+  for (auto& t : xs) C += t->shape[1];
+  DT y = dmake({N, C, H, W});
+  int64_t off = 0;
+  for (auto& t : xs) { int64_t Ck = t->shape[1], blk = Ck*H*W;
+    for (int64_t n = 0; n < N; ++n)
+      thrust::copy(t->data.begin()+n*blk, t->data.begin()+(n+1)*blk, y->data.begin()+n*C*H*W + off*H*W);
+    off += Ck; }
+  y->parents = xs;
+  y->backward_fn = [xs, y, N, C, H, W]() {
+    int64_t off = 0;
+    for (auto& t : xs) { int64_t Ck = t->shape[1], blk = Ck*H*W;
+      for (int64_t n = 0; n < N; ++n) { auto ys = y->grad.begin()+n*C*H*W + off*H*W;
+        thrust::transform(ys, ys+blk, t->grad.begin()+n*blk, t->grad.begin()+n*blk, thrust::plus<float>()); }
+      off += Ck; }
+  };
+  return y;
+}
+inline DT dslice(DT x, int64_t c0, int64_t c1) {        // channels [c0, c1)
+  int64_t N = x->shape[0], C = x->shape[1], H = x->shape[2], W = x->shape[3];
+  int64_t Cs = c1-c0, blk = Cs*H*W, xblk = C*H*W;
+  DT y = dmake({N, Cs, H, W});
+  for (int64_t n = 0; n < N; ++n)
+    thrust::copy(x->data.begin()+n*xblk + c0*H*W, x->data.begin()+n*xblk + c1*H*W, y->data.begin()+n*blk);
+  y->parents = {x};
+  y->backward_fn = [x, y, N, C, H, W, c0, Cs, blk, xblk]() {
+    for (int64_t n = 0; n < N; ++n) { auto ys = y->grad.begin()+n*blk;
+      thrust::transform(ys, ys+blk, x->grad.begin()+n*xblk + c0*H*W, x->grad.begin()+n*xblk + c0*H*W, thrust::plus<float>()); }
+  };
+  return y;
+}
+inline DT dupsample2x(DT x) {                            // nearest-neighbour 2x
+  int64_t N = x->shape[0], C = x->shape[1], H = x->shape[2], W = x->shape[3], OH = 2*H, OW = 2*W;
+  DT y = dmake({N, C, OH, OW});
+  const float* X = x->dp(); float* Y = y->dp();
+  bk::parallel_for(N*C*OH*OW, [=] BK_HD (int64_t idx) {
+    int64_t ow = idx%OW, t = idx/OW, oh = t%OH, t2 = t/OH, c = t2%C, n = t2/C;
+    Y[idx] = X[((n*C+c)*H + oh/2)*W + ow/2];
+  });
+  y->parents = {x};
+  y->backward_fn = [x, y, N, C, H, W, OH, OW]() {
+    const float* GY = y->gp(); float* GX = x->gp();
+    bk::parallel_for(N*C*H*W, [=] BK_HD (int64_t idx) {   // per input element: sum its 2x2 (race-free)
+      int64_t iw = idx%W, t = idx/W, ih = t%H, t2 = t/H, c = t2%C, n = t2/C; float a = 0.f;
+      for (int dy = 0; dy < 2; ++dy) for (int dx = 0; dx < 2; ++dx) a += GY[((n*C+c)*OH + 2*ih+dy)*OW + 2*iw+dx];
+      GX[idx] += a;
+    });
+  };
+  return y;
+}
+inline DT dmaxpool2d(DT x, int64_t k, int64_t s, int64_t p) {
+  int64_t N = x->shape[0], C = x->shape[1], H = x->shape[2], W = x->shape[3];
+  int64_t OH = (H+2*p-k)/s+1, OW = (W+2*p-k)/s+1;
+  DT y = dmake({N, C, OH, OW});
+  auto argi = std::make_shared<thrust::device_vector<int64_t>>(N*C*OH*OW, (int64_t)-1);
+  const float* X = x->dp(); float* Y = y->dp(); int64_t* AI = thrust::raw_pointer_cast(argi->data());
+  bk::parallel_for(N*C*OH*OW, [=] BK_HD (int64_t idx) {
+    int64_t ow = idx%OW, t = idx/OW, oh = t%OH, t2 = t/OH, c = t2%C, n = t2/C;
+    float best = -3.4e38f; int64_t bi = -1;
+    for (int64_t r = 0; r < k; ++r) for (int64_t q = 0; q < k; ++q) {
+      int64_t ih = oh*s-p+r, iw = ow*s-p+q; if (ih < 0 || ih >= H || iw < 0 || iw >= W) continue;
+      int64_t ii = ((n*C+c)*H+ih)*W+iw; float v = X[ii]; if (v > best) { best = v; bi = ii; }
+    }
+    Y[idx] = best; AI[idx] = bi;
+  });
+  y->parents = {x};
+  y->backward_fn = [x, y, argi, N, C, OH, OW]() {
+    const float* GY = y->gp(); float* GX = x->gp(); const int64_t* AI = thrust::raw_pointer_cast(argi->data());
+    bk::parallel_for(N*C, [=] BK_HD (int64_t nc) {        // per (n,c) plane: scatter to argmax (race-free)
+      int64_t base = nc*OH*OW;
+      for (int64_t o = 0; o < OH*OW; ++o) { int64_t ii = AI[base+o]; if (ii >= 0) GX[ii] += GY[base+o]; }
+    });
+  };
+  return y;
+}
+
 // ---- reverse-mode backward over the tape ----
 inline void dbackward(DT root) {
   std::vector<DT> topo; std::unordered_set<DNode*> seen;
